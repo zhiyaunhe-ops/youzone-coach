@@ -115,3 +115,23 @@ node scripts/probe_peer_scope.js         # 每peer's tenantId/chatId/digitalCode
 - 客户端掉到扫码登录页时 CDP 里没有 cookie、库里的 token 也已过期，必须先扫码登录（`preflight.js` 会明确指出）。
 - 教练同一问题多轮答案可能不一致，取到的节点/字段/公式必须回环境复核。
 - 未实现 `permessage-deflate`：若服务端协商该扩展，客户端会**明确报错**而不是静默卡死。
+
+## 许可证
+
+本项目采用 [Apache License 2.0](LICENSE) 开源。
+
+```
+Copyright 2026 Zhiyuanhe
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+```
