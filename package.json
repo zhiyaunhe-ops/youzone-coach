@@ -1,0 +1,19 @@
+{
+  "name": "youzone-coach",
+  "version": "0.3.0",
+  "description": "友空间（YonZone）两个 AI 教练（高级版实施总教练 / 交付赋能总教练）的接入工具链：本地消息库读取、CDP 驱动、IM WebSocket + SSE 协议直连、按 peer 路由的本地 ask API",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "test": "node --no-warnings scripts/selftest.js",
+    "preflight": "node --no-warnings scripts/preflight.js",
+    "headless": "node scripts/coach_headless.js",
+    "ask-server": "node scripts/coach_ask_server.js",
+    "ask": "node scripts/ask.js",
+    "ask-both": "node scripts/ask_both.js",
+    "dump": "node scripts/dump_chat.js",
+    "pack": "node scripts/pack.js"
+  }
+}

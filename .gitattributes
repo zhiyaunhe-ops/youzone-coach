@@ -1,0 +1,17 @@
+# 本机 core.autocrlf=true。node / pwsh 脚本虽不依赖 sed/awk 抽文本，
+# 但 CRLF 往返会让 diff 出现纯行尾噪声，掩盖真实改动。统一按LF 入库、
+# 检出时由 Git 转换，Windows 侧的 node 与 PowerShell 5.1 都能正常读取。
+* text=auto eol=lf
+
+# 二进制：禁止行尾转换
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.db binary
+*.db-wal binary
+*.db-shm binary
+*.mp4 binary
+*.mkv binary
+*.zip binary

@@ -1,0 +1,12 @@
+dist/
+tmp/
+*.db
+*.db-wal
+*.db-shm
+capture-*.json
+references/*payload*.json
+references/aip-*.json
+references/replay-sse.txt
+references/db-inspect-*.json
+references/clarify-payload.json
+references/ws-*.json
