@@ -33,6 +33,19 @@ node scripts/probe_peer_scope.js   # 每个 peer 的 tenantId/chatId/digitalCode
 
 客户端（YonZone Electron 8.5.1）**没有公开 API**，接入靠下面四条通道。
 
+## ⚠️ 两条硬规则（2026-10-14 事故后）
+
+1. **通道 D 默认禁用**：`coach_headless.js` 一 AUTH 就会把 YonZone 桌面端顶到扫码登录页（服务端 `16640/409`）。它现在**不带 `--kick-ok` 直接拒绝运行（退出码 4）**；`preflight.js --ws` 同理要 `--kick-ok`（或 `YZ_ALLOW_KICK=1`）。**日常问教练一律走通道 C**（驱动客户端自己的 webview，不顶号）。
+2. **长任务一律后台跑，不要在前台开控制台窗口**：前台跑一次问答会开着 cmd/pwsh 窗口好几分钟并抢焦点。统一入口 `node scripts/bg.js <脚本> [参数...]`：detached + `windowsHide`（CREATE_NO_WINDOW）+ stdio 落 `logs/`，调用方立刻返回，屏幕上什么都不出现。**别用 `cmd /c start`**——那正是"弹 cmd 窗口"的来源。
+
+```bash
+node scripts/bg.js coach_ask_server.js         # 起 ask 服务（后台、无窗口；只需一次）
+node scripts/bg.js ask_both.js --file q.txt --out ..\proj --tag q2
+node scripts/bg.js --list                      # 在跑的后台任务 + 末行日志
+node scripts/bg.js --tail ask_both 40          # 看日志
+node scripts/bg.js --kill ask_both             # 停掉（别留半拉会话一直顶着桌面端）
+```
+
 ## 通道 C（首选）：本地 ask API —— 已建成并实测通过
 
 ```bash
@@ -46,6 +59,7 @@ POST /ask {"q":"...", "peer":"delivery", "timeoutMs":180000} → {ok, answer, st
 
 - **peer 路由**：`/health` 返回 `availablePeers`（别名 + 显示名）；`/history?peer=` 按教练读各自历史；`/ask` 的 `peer` 支持别名（`impl`/`implementation`/`coach`/`delivery`/`empower`）或裸 `ipa_<uuid>`，**缺省是 impl**。
 - ⚠️ **必须核对当前会话**（`ask_both.js` 切换时已自动处理）：两个教练共用同一个 `single-agent` webview，`ask` 前会读主页面 hash（`#/main/im/<peer>/…`）核对，不符就自动点击切换。否则会把问题发进另一个教练的会话。
+- 🚨 **会话校验要双条件**（实测修过的真 bug）：`coach_ask_server.js` 的 `ensureConversation` 曾经**只查主页面 hash**，但两个教练共用一个 `single-agent` webview，切换后 hash 不一定同步更新 → **问题会被静默发进另一个教练的会话**（看不到报错，只是答案怪）。现已改为**双条件**：hash 匹配 **且** webview 标题 == 教练显示名；重试 16 次（i=0/6 各点一次），不符时报 misroute。修改后回归测过 impl/delivery 两个会话。
 - 原理：置前窗口 → CDP 驱动 secretary webview 填框点发送 → 共享读复制消息库轮询终稿（基线用消息 **ts+id，绝不能用 rowid**——最新消息 rowid 反而更小，历史分页往上追加）。
 - **中文千万别走 curl 命令行 -d 参数**：本机 curl 会把 argv 按 ANSI(GBK) 编码发出（实测 `你好`→`c4e3bac3`），教练收到乱码还会用 answerType=97 反问。用 `ask.js`（node argv 是干净 UTF-8）或 `curl --data-binary @file`。
 - 服务一次只跑一问（内部串行）；答案文本在 `extend.responses[0].data.showData.text`，澄清/反问类在 `data.text`（answerType=97），两者都要解析。
@@ -73,10 +87,12 @@ POST /ask {"q":"...", "peer":"delivery", "timeoutMs":180000} → {ok, answer, st
 
 ## 通道 D（无头，2026-10-02 打通）：coach_headless.js —— 不依赖 UI/CDP 直连
 
+> 🚫 **默认禁用（2026-10-14 起）**：没有 `--kick-ok`（或 `YZ_ALLOW_KICK=1`）会直接拒绝运行并退出 4 —— 这条通道一上就把桌面端顶下线（见文首硬规则 1）。只有"明确允许把用户踢下线"时才用。
+
 先用 `node scripts/preflight.js` 体检：打印 Node 版本、消息库与最近提问行、CDP 目标、凭据来源、设备指纹模式，并复查 imToken 交换之后桌面端是否还在线（不提问、不顶号）。**默认不做 IM 鉴权检查**——那是第二条会话、会把桌面端顶下线；要测加 `--ws`。
 
 ```bash
-node scripts/coach_headless.js "你的问题" [--timeout 180000] [--json] [--peer ipa_<uuid>] [--file q.txt]
+node scripts/coach_headless.js "你的问题" --kick-ok [--timeout 180000] [--json] [--peer ipa_<uuid>] [--file q.txt]
 # → 身份: 本地库最近提问行的 robotBusiness（取不到则明确报错并提示先在本机打开一次教练会话）
 # → 认证链: yht_access_token(YonZone CDP cookies 优先 → 本地库快照回落) → GET /yonbip-ec-base/user/pc/imToken 换 imToken(~24h)
 #   → wss://imws.yonyoucloud.com:5225 (子协议 xmpp, Origin: file://, 握手无 Cookie) → AUTH 帧(usr/atk/br/appType=8/clientIdentify)
@@ -126,12 +142,16 @@ window['nc-lightapp-front'].ajax({
 - 用 curl/PowerShell 调本地 ask 服务时，问句中文可能被 ANSI 编码破坏 → 用 `ask.js`，或 POST UTF-8 文件（`--data-binary @f.json`）。
 - pwsh profile 强制 UTF-8；-NoProfile 时要显式设置编码。fg.ps1 已处理。
 - policy 拦含 `Stop-Process`/`Start-Process` 字样的整条命令 → 用 `taskkill` / `cmd //c start` 替代。
+- **长任务不要前台跑**（会开着控制台窗口好几分钟 + 抢焦点）→ 用 `scripts/bg.js`（detached + `windowsHide`，stdio 落 `logs/`）。
+- 别用 `cmd /c start` 起后台任务：那是新开一个控制台窗口，就是"弹 cmd"的来源。
+- 半拉会话会一直顶着桌面端：收尾用 `node scripts/bg.js --kill <job>` 停掉，别让它自然超时。
 - PowerShell 传中文给 node 会乱码 → 中文内容写 UTF-8 无 BOM 文件再 evalfile/insfile。
 
 ## 资源
 
 - `scripts/coach_headless.js` — 无头客户端（通道 D，协议直连，仅内置模块）
 - `scripts/ws_client.js` — 裸 RFC6455 WebSocket 客户端（支持自定义握手头/子协议）
+- `scripts/bg.js` — **后台无窗口启动器**（detached + windowsHide + 日志落 logs/；`--list`/`--tail`/`--kill`）
 - `scripts/coach_ask_server.js` — 本地 ask API（通道 C，按 peer 路由）
 - `scripts/ask.js` — CLI 客户端（中文安全，`--peer impl|delivery`）
 - `scripts/ask_both.js` — **一次问两个教练**，产出合并 markdown（`--out`/`--tag`）

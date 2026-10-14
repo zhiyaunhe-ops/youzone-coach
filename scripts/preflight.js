@@ -14,7 +14,10 @@ const JSON_OUT = argv.includes('--json');
 const NO_WS = argv.includes('--no-ws');
 // The IM auth check is opt-in: it is a second session, and the server answers it by
 // kicking the desktop client (opcode 16640/409), so a plain preflight stays harmless.
-const WITH_WS = argv.includes('--ws');
+// --ws is a second WS session: the server answers it by taking the desktop client over
+// (16640/409), so it needs the same explicit opt-in as channel D.
+const KICK_OK = argv.includes('--kick-ok') || process.env.YZ_ALLOW_KICK === '1';
+const WITH_WS = argv.includes('--ws') && KICK_OK;
 const IDX = argv.indexOf('--identify');
 if (IDX >= 0 && argv[IDX + 1]) process.env.YZ_CLIENT_IDENTIFY = argv[IDX + 1];
 const log = JSON_OUT ? () => {} : (...a) => console.log(...a);
@@ -111,7 +114,7 @@ async function main() {
     } finally { if (conn) try { conn.close(); } catch {} }
   }
 
-  if (creds && !WITH_WS) note('skipped the IM auth check - add --ws to test it (it will take the desktop client over)');
+  if (creds && !WITH_WS) note('skipped the IM auth check - add --ws --kick-ok to test it (it WILL log the desktop client out)');
   if (JSON_OUT) console.log(JSON.stringify(report, null, 2));
   else log(report.ok ? '\npreflight OK - coach_headless.js is ready' : '\npreflight FAILED - see the FAIL lines above');
   process.exit(report.ok ? 0 : 1);

@@ -173,7 +173,7 @@ t('bare question keeps every word (regression: first word was dropped)', () => {
   assert.strictEqual(parseArgs(['q']).timeoutMs, 180000);
 });
 t('flags are honoured in any position', () => {
-  assert.deepStrictEqual(parseArgs(['a b', '--timeout', '1000']), { q: 'a b', timeoutMs: 1000, json: false, peer: null, file: null, identify: null, help: false });
+  assert.deepStrictEqual(parseArgs(['a b', '--timeout', '1000']), { q: 'a b', timeoutMs: 1000, json: false, peer: null, file: null, identify: null, kickOk: false, help: false });
   assert.strictEqual(parseArgs(['-t', '500', '问', '题']).timeoutMs, 500);
   const o = parseArgs(['--json', '--peer', 'ipa_x', 'q']);
   assert.strictEqual(o.json, true);
@@ -181,6 +181,7 @@ t('flags are honoured in any position', () => {
   assert.strictEqual(o.q, 'q');
   assert.strictEqual(parseArgs(['--file', 'q.txt']).file, 'q.txt');
   assert.strictEqual(parseArgs(['--identify', 'ab12', 'q']).identify, 'ab12');
+  assert.strictEqual(parseArgs(['--kick-ok', 'q']).kickOk, true);
 });
 t('bad flags fail loudly instead of silently mangling the question', () => {
   assert.throws(() => parseArgs(['--timeout']), /positive number/);
@@ -203,6 +204,12 @@ t('CLI exit codes', () => {
   if (help.status === null) return;
   assert.strictEqual(help.status, 0);
   assert.match(help.stdout, /usage:/);
+  // channel D must refuse to run unless the caller accepts that the desktop client
+  // gets logged out: a bare question exits 4 before any network I/O (offline check).
+  const refused = spawnSync(process.execPath, [script, 'ping'], { encoding: 'utf8', env: Object.assign({}, process.env, { YZ_ALLOW_KICK: '' }) });
+  if (refused.status === null) return; // sandboxed parent: child killed silently
+  assert.strictEqual(refused.status, 4, 'no --kick-ok -> refuse with exit 4');
+  assert.match(refused.stderr, /REFUSED/);
 });
 
 console.log('syntax');

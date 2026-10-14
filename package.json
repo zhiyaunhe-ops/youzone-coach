@@ -10,6 +10,7 @@
     "test": "node --no-warnings scripts/selftest.js",
     "preflight": "node --no-warnings scripts/preflight.js",
     "headless": "node scripts/coach_headless.js",
+    "bg": "node scripts/bg.js",
     "ask-server": "node scripts/coach_ask_server.js",
     "ask": "node scripts/ask.js",
     "ask-both": "node scripts/ask_both.js",

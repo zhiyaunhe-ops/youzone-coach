@@ -24,13 +24,15 @@
 npm test                                   # 离线自检，不联网、不碰数据库
 
 # 首选：一次问两个教练，产出合并markdown
-node scripts/coach_ask_server.js &        # 通道 C 前置
-node scripts/ask_both.js "你的问题" --timeout 240000 --out . --tag mytag
+node scripts/bg.js coach_ask_server.js          # 通道 C 前置（后台起、无窗口；只需一次）
+node scripts/bg.js ask_both.js "你的问题" --timeout 240000 --out . --tag mytag
+node scripts/bg.js --tail ask_both              # 看进度（日志在 logs/）
 
-# 通道 D：无头提问（不依赖 UI）
-node scripts/coach_headless.js "用一句话说明库存调拨单和转库单的区别"
+# 通道 D：无头提问（默认禁用：一 AUTH 就把桌面端顶到扫码登录页 -> 见 SKILL.md 硬规则 1）
+# 只有在“明确允许把用户踢下线”时才加 --kick-ok（或设 YZ_ALLOW_KICK=1）
+node scripts/coach_headless.js --kick-ok "用一句话说明库存调拨单和转库单的区别"
 node scripts/coach_headless.js "问题" --timeout 180000 --json     # 结构化输出给脚本用
-node scripts/coach_headless.js --file question.txt                # 中文从 UTF-8 文件读，避开命令行编码
+node scripts/coach_headless.js --kick-ok --file question.txt                # 中文从 UTF-8 文件读，避开命令行编码
 
 npm run preflight                          # 体检：库/CDP/凭据/WS 鉴权（只握手，不提问）
 
@@ -39,7 +41,7 @@ node scripts/dump_chat.js --out refs.md --limit 200
 node scripts/dump_chat.js --peer delivery --out delivery.md
 
 # 通道 C：本地 ask API（需 YonZone + CDP）
-node scripts/coach_ask_server.js
+node scripts/bg.js coach_ask_server.js    # 后台起、无窗口
 node scripts/ask.js "你好，请用一句话介绍你自己"
 node scripts/ask.js "问题" --peer delivery
 
@@ -56,14 +58,15 @@ node scripts/list_conversations.js         # 读 webview 会话列表拿真实�
 | A 只读消息库 | `dump_chat.js` | 无（共享读复制 + GBK 解码） | 读历史问答、不打断用户 |
 | B CDP 驱动 | `youzone_cdp.js` | YonZone 开 CDP `127.0.0.1:8089` | 探页面、填框发送、DOM 取证 |
 | C 本地 ask API | `coach_ask_server.js` | B | 把教练变成 `POST /ask {q,peer}` 的同步接口 |
-| D 无头直连 | `coach_headless.js` | 有效 token | 不上 UI，IM WebSocket 写 + SSE 读 |
+| D 无头直连 | `coach_headless.js` | 有效 token | **默认禁用**（需 `--kick-ok`）：会上第二个 IM 会话，把桌面端顶到登录页 |
+| 后台启动 | `bg.js` | — | detached + `windowsHide` 跑任何脚本、零窗口；日志落 `logs/`（`--list`/`--tail`/`--kill`） |
 | 双问 | `ask_both.js` | C | 同一问题问两个教练，落合并 markdown |
 | 体检 | `preflight.js` | — | 逐项检查前置条件并说明当前哪条通道可用 |
 
 ## 凭据来源（通道 D）
 
 1. **YonZone 在运行**：CDP `Network.getAllCookies` 取 `.yonyoucloud.com` 的 `yht_access_token`（最新）。
-   无头会话默认使用**自生成设备指纹**（`--identify <40hex>` 可覆盖）。注意：**服务端同账号同一 pc 设备组只保留一个会话**，所以通道 D 一 AUTH 就会把桌面客户端顶到登录页（服务端推 `16640/409`）；要边用客户端边提问请走通道 C（`coach_ask_server.js`）。只做 imToken 交换不影响客户端。
+   无头会话默认使用**自生成设备指纹**（`--identify <40hex>` 可覆盖）。注意：**服务端同账号同一 pc 设备组只保留一个会话**，所以通道 D（从 2026-10-14 起默认禁用，需 `--kick-ok`）一 AUTH 就会把桌面客户端顶到登录页（服务端推 `16640/409`）；要边用客户端边提问请走通道 C（`coach_ask_server.js`）。只做 imToken 交换不影响客户端。
 2. **YonZone 没跑**：回落到本地消息库里最近一条提问行的 `robotBusiness.yht_access_token` 快照——
    **可能已过期**，脚本会打印来源与时间；被服务端拒绝时直接报错并提示启动 YonZone。
 3. `imToken` 每次现换（`GET /yonbip-ec-base/user/pc/imToken`，约 24h）。

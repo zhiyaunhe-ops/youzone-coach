@@ -3,7 +3,14 @@
 // WebSocket protocol directly - no UI automation, no CDP required (CDP is only
 // used, when available, to refresh the yht_access_token from live cookies).
 //
-//   node coach_headless.js "问题" [--timeout 180000] [--json] [--peer ipa_<uuid>] [--file q.txt]
+//   node coach_headless.js "问题" --kick-ok [--timeout 180000] [--json] [--peer ipa_<uuid>] [--file q.txt]
+//
+// DISABLED BY DEFAULT (2026-10-14): this client opens a SECOND IM session for the same
+// account. The server keeps one session per account on the 'pc' device group and answers
+// by kicking the YonZone desktop client to the scan-login page (16640/409) - the exact
+// symptom the user reported. Asking without logging them out is channel C's job
+// (coach_ask_server.js driving the client's own webview). --kick-ok / YZ_ALLOW_KICK=1 is
+// only for the rare case where the desktop client is allowed to be logged out.
 //
 // Wire format (verified live; see references/protocol-map.md). Application frame
 // = 13-byte header + payload, all big-endian:
@@ -281,7 +288,22 @@ async function readSseAnswer(streamUrl, yhtToken, onFrame) {
   return out;
 }
 
+const KICK_REFUSAL = [
+  'REFUSED: 通道 D (headless) opens a SECOND IM session for your account.',
+  'The server keeps one session per account on the pc device group and answers by',
+  'kicking the YonZone desktop client to the scan-login page (opcode 16640/409).',
+  '',
+  'Ask without logging the user out - use 通道 C (no second session):',
+  '  node scripts/bg.js coach_ask_server.js          # keep the ask API up (hidden)',
+  '  node scripts/bg.js ask_both.js --file q.txt --out <dir> --tag <tag>',
+  '',
+  'If the desktop client really may be logged out:  --kick-ok   (or YZ_ALLOW_KICK=1)',
+].join('\n');
+
 async function ask(q, { timeoutMs = 180000, log = console.error, peer = null } = {}) {
+  // Channel D takes the desktop client offline: the server pushes 16640/409 the moment
+  // our AUTH lands. Refuse unless the caller explicitly accepts that.
+  if (process.env.YZ_ALLOW_KICK !== '1') throw new Error(KICK_REFUSAL);
   const id = resolveIdentity({ peer, log });
   log('[identity] clientIdentify = ' + id.identifySource + ' ' + id.imClientIdentify.slice(0, 10) + '...');
   log('[identity] member=' + id.memberId + ' peer=' + id.peerId + ' chatId=' + id.chatId + ' source=' + id.source);
@@ -420,7 +442,7 @@ async function ask(q, { timeoutMs = 180000, log = console.error, peer = null } =
 // ---- CLI -------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const out = { q: '', timeoutMs: 180000, json: false, peer: null, file: null, identify: null, help: false };
+  const out = { q: '', timeoutMs: 180000, json: false, peer: null, file: null, identify: null, kickOk: false, help: false };
   const words = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -432,6 +454,7 @@ function parseArgs(argv) {
       out.timeoutMs = v;
     } else if (a === '--peer') out.peer = argv[++i];
     else if (a === '--identify') out.identify = argv[++i];
+    else if (a === '--kick-ok') out.kickOk = true;
     else if (a === '--file') out.file = argv[++i];
     else if (a.startsWith('--')) throw new Error('unknown flag: ' + a);
     else words.push(a);
@@ -440,7 +463,7 @@ function parseArgs(argv) {
   return out;
 }
 
-const USAGE = 'usage: node coach_headless.js "问题" [--timeout 180000] [--json] [--peer ipa_<uuid>] [--file q.txt] [--identify <40hex>]';
+const USAGE = 'usage: node coach_headless.js "问题" [--timeout 180000] [--json] [--peer ipa_<uuid>] [--file q.txt] [--identify <40hex>] [--kick-ok]';
 
 module.exports = { ask, imFrame, decodeFrame, parseArgs, resolveIdentity, buildQuestionFrame, getCredentials, tokenFromYonZoneCdp, parseWsAnswer, IM_URL, UA, OP, FALLBACK };
 
@@ -452,6 +475,12 @@ if (require.main === module) {
   if (opt.identify) process.env.YZ_CLIENT_IDENTIFY = opt.identify;
   if (opt.file) opt.q = fs.readFileSync(opt.file, 'utf8').trim();
   if (!opt.q) { console.error(USAGE); process.exit(2); }
+  if (opt.kickOk) {
+    process.env.YZ_ALLOW_KICK = '1';
+  } else if (process.env.YZ_ALLOW_KICK !== '1') {
+    console.error(KICK_REFUSAL);
+    process.exit(4); // refuse BEFORE any network I/O: no session, no kick
+  }
   ask(opt.q, { timeoutMs: opt.timeoutMs, peer: opt.peer })
     .then(r => {
       if (opt.json) { console.log(JSON.stringify(r, null, 2)); return; }
