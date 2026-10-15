@@ -83,3 +83,11 @@ node scripts/probe_peer_scope.js
 输出：18 个 `ipa_` 会话清单 + 每个的 `tenantId` / `chatId` / `digitalCode` / `robotBusiness` 全部键名 + tenantId 分布统计。
 
 > 注意：解析 `robotBusiness` **必须用 `lib.js` 的 `parseMessage()`**。手写 `JSON.parse(content).robotBusiness` 会因为载荷是嵌套 JSON 字符串而**静默返回空**（contentType=2 的行里 `content` 字段本身是 JSON 字符串，答案文本在更内层）。
+
+## Related documents
+
+本页只适用于相关任务；返回总入口或直接跳到所需资料，避免无关上下文。
+
+- [README / Project overview](../README.md)
+- [友空间两个 AI 教练的接入与问答记录](../SKILL.md)
+- [教练接入协议逆向笔记（2026-10-01/02 实测，无头客户端已打通）](protocol-map.md)

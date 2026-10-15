@@ -138,3 +138,12 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ```
+
+## Related documents
+
+Agent 按任务从下列入口跳转，不要逐篇加载文档；协议和历史记录只在需要时打开。
+
+- [友空间两个 AI 教练的接入与问答记录](SKILL.md)
+- [两个教练的 peerId 在别人机器上能不能用](references/peer-id-scope.md)
+- [教练接入协议逆向笔记（2026-10-01/02 实测，无头客户端已打通）](references/protocol-map.md)
+- [历史问答记录（按需读取）](references/coach-chat-log.md)

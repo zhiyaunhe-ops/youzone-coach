@@ -198,3 +198,11 @@ node scripts/pack.js --out D:\somewhere --no-skill
 - ⚠️ 验证解压产物要用 `C:\Users\<u>\AppData\Local\Temp\...` 这类**绝对路径**：Git Bash 的 `/tmp` 与 Windows 侧 Python 看到的 `/tmp` 不是同一处，否则误报 `MODULE_NOT_FOUND`。
 - ⚠️ `npm test` 里的 `CLI exit codes` 用 `spawnSync(process.execPath, ...)` 测子进程退出码，**在沙箱下子进程会被静默杀掉**（`status === null`），脚本已改为跳过并打印提示，不要把它当成回归。语法检查已改成用 `vm.Script` 进程内解析，不再 spawn。
 - 验证套路：解压到干净目录 → `npm test` 应全过。
+
+## Related documents
+
+本页只适用于相关任务；返回总入口或直接跳到所需资料，避免无关上下文。
+
+- [README / Project overview](README.md)
+- [两个教练的 peerId 在别人机器上能不能用](references/peer-id-scope.md)
+- [教练接入协议逆向笔记（2026-10-01/02 实测，无头客户端已打通）](references/protocol-map.md)

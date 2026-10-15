@@ -109,3 +109,11 @@ yht_access_token （会话根凭证，~7天有效）
 - 抓包素材：`references/ws-handshake-capture.json`（真实握手头+AUTH 帧字节）、
   `references/ws-send-question.json`、`references/capture-2026-10-01T15-02-41-641Z.json`。
   含明文 token，勿外传（已 gitignore）。
+
+## Related documents
+
+本页只适用于相关任务；返回总入口或直接跳到所需资料，避免无关上下文。
+
+- [README / Project overview](../README.md)
+- [友空间两个 AI 教练的接入与问答记录](../SKILL.md)
+- [两个教练的 peerId 在别人机器上能不能用](peer-id-scope.md)
