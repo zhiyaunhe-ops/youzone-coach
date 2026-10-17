@@ -5,8 +5,8 @@
 //   node scripts/pack.js --out D:\somewhere     # 换输出目录
 //   node scripts/pack.js --no-skill            # 只出 zip
 //
-// What goes in : SKILL.md README.md package.json .gitattributes .gitignore
-//                scripts/*.{js,ps1}  references/*.md
+// What goes in : SKILL.md README.md package.json LICENSE .gitattributes .gitignore
+//                scripts/*.{js,mjs,ps1,json,txt}  references/*.md
 // What stays out: .git/ node_modules/ dist/ tmp/ *.db(-wal|-shm) capture-*.json
 //                 *payload*.json  aip-*.json  ws-*.json  replay-sse.txt  *.log
 //
@@ -38,9 +38,9 @@ for (let i = 0; i < args.length; i++) {
 }
 
 // ---- select files -------------------------------------------------------
-const INCLUDE_FILES = ['SKILL.md', 'README.md', 'package.json', '.gitattributes', '.gitignore'];
+const INCLUDE_FILES = ['SKILL.md', 'README.md', 'package.json', 'LICENSE', '.gitattributes', '.gitignore'];
 const INCLUDE_DIRS = ['scripts', 'references'];
-const INCLUDE_EXT = /\.(js|ps1|md|json|txt)$/;
+const INCLUDE_EXT = /\.(js|mjs|ps1|md|json|txt)$/;
 
 function ignored(basename) {
   if (['.git', 'node_modules', 'tmp', 'dist'].includes(basename)) return true;
@@ -249,8 +249,9 @@ const manifest = [
   `cd <skills-dir>/${NAME} && npm test`,
   '',
   '# 3) 按 SKILL.md 通道 B 打开 YonZone CDP（只需做一次），然后：',
-  'node scripts/coach_ask_server.js &',
-  'node scripts/ask_both.js "你的问题" --out . --tag t1',
+  'node scripts/bg.js coach_ask_server.js        # 后台无窗口，只需一次',
+  'node scripts/bg.js ask_both.js "你的问题" --out . --tag t1',
+  'node scripts/bg.js --tail ask_both            # 看进度（日志在 logs/）',
   '```',
   '',
   '## 安全',

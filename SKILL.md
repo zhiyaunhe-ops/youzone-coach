@@ -41,7 +41,7 @@ node scripts/discover_coaches.js --json       # 机器可读
 - 显示名取 `.mid-info[title]`。**不要用 `.title` 的文本**——它会把「智能体」标签一起带出来（`交付赋能总教练 智能体`），而 webview 标题没有这个后缀。
 - 匹配按**精确名优先、关键词兜底**：`impl` 先「高级版实施总教练（多智能验证版）」再「高级版实施总教练」；`delivery` 先「交付赋能总教练」。**不要取列表第一行**——目录里还有「超级版交付总教练」「高级版客开总教练」「实施总教练」等几十个同关键词的智能体。
 - 打开会话靠点目录行（`li.agent-item`）。**没聊过的智能体也在目录里，点一下就开始新会话**——这就是「新机器从没和教练说过话也能用」的关键。旧的 `li.all-item` 只覆盖有历史会话的账号，现在只作兜底。
-- 跑不通/改了名：`COACH_IMPL_TITLE` / `COACH_DELIVERY_TITLE`（或 `COACH_IMPL_ID` / `COACH_DELIVERY_ID`）钉住；服务端默认教练用 `COACH_PEER`（别名，默认 `impl`）。
+- 跑不通/改了名：`COACH_IMPL_TITLE` / `COACH_DELIVERY_TITLE`（或 `COACH_IMPL_ID` / `COACH_DELIVERY_ID`）钉住；**设了就是硬钉**，找不到就报未解析，不会退回同关键词的其它智能体。服务端默认教练用 `COACH_PEER`（别名，默认 `impl`）。
 
 peerId 本身仍是**用友全局智能体注册 ID**（本机实测就是上表两个），写同样的值能连到同一个智能体；**数据隔离在下一层的 `chatId` + `yht_access_token`**，实测同一 peer 下不同会话 `chatId` 不同，而 `peerId`/`digitalCode`/`tenantId` 恒定。证据见 `references/peer-id-scope.md`。但**不要假设 ID 恒定**：换租户/未授权时列表里根本没有它，所以本 skill 一律「先发现、再按发现的 id 点击」。
 
@@ -226,6 +226,7 @@ window['nc-lightapp-front'].ajax({
 - `scripts/preflight.js` — 环境体检（Node/库/CDP/凭据/WS 鉴权，只握手不提问；`--no-ws`/`--json`）
 - `scripts/selftest.js` — 离线自检（`npm test`，不联网、不碰原库）
 - `scripts/pack.js` — 打包（`npm run pack` → `dist/<name>-<ver>.zip` + `.skill` + `MANIFEST.md`）
+- `scripts/check-doc-links.mjs` — 文档链接/导航检查（`npm run docs:check`，CI 同款）
 - `package.json` / `README.md` — 运行要求（Node >= 22.5）与快速开始
 
 ## 分发打包（pack.js）
@@ -237,7 +238,7 @@ npm run pack                # -> dist/youzone-coach-<ver>.zip
 node scripts/pack.js --out D:\somewhere --no-skill
 ```
 
-- **白名单**：`SKILL.md` `README.md` `package.json` `.gitattributes` `.gitignore` + `scripts/*.{js,ps1,json,txt}` + `references/*.{md,json,txt}`。
+- **白名单**：`SKILL.md` `README.md` `package.json` `LICENSE` `.gitattributes` `.gitignore` + `scripts/*.{js,mjs,ps1,json,txt}` + `references/*.{md,json,txt}`。
 - **黑名单**：`.git/` `node_modules/` `dist/` `tmp/` `*.db(-wal|-shm)` `capture-*.json` `db-inspect-*.json` `ws-*.json` `*payload*.json` `aip-*.json` `replay-sse.txt` `*.log`。
 - 产物**不含** `yht_access_token` 与会话库；`references/coach-chat-log.md` 含问答正文，外发前人工过一遍。
 - **纯 Node 写 zip**（自带CRC-32 + store/deflate 自适应），不 spawn 任何外部工具。三种方案都试过、都不行：
@@ -252,7 +253,8 @@ node scripts/pack.js --out D:\somewhere --no-skill
   `testzip()` 逐条校验 CRC，能抓出 store/deflate 写错的问题。
 - ⚠️ 验证解压产物要用 `C:\Users\<u>\AppData\Local\Temp\...` 这类**绝对路径**：Git Bash 的 `/tmp` 与 Windows 侧 Python 看到的 `/tmp` 不是同一处，否则误报 `MODULE_NOT_FOUND`。
 - ⚠️ `npm test` 里的 `CLI exit codes` 用 `spawnSync(process.execPath, ...)` 测子进程退出码，**在沙箱下子进程会被静默杀掉**（`status === null`），脚本已改为跳过并打印提示，不要把它当成回归。语法检查已改成用 `vm.Script` 进程内解析，不再 spawn。
-- 验证套路：解压到干净目录 → `npm test` 应全过。
+- **文档检查**：改过任何 `.md` 后跑 `npm run docs:check`。本地会按 `.gitignore` 跳过 `dist/`、`logs/` 等生成物，与 CI 的干净 checkout 结果一致；每个文档都要求有 `## Related documents` 且从 README 可达。
+- 验证套路：解压到干净目录 → `npm test` + `npm run docs:check` 应全过。
 
 ## Related documents
 

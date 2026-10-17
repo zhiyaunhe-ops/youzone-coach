@@ -90,7 +90,7 @@ npm run pack                # -> dist/youzone-coach-<ver>.zip
 node scripts/pack.js --out D:\somewhere --no-skill
 ```
 
-白名单收`SKILL.md`/`README.md`/`package.json` 与 `scripts/`、`references/`，
+白名单收 `SKILL.md` / `README.md` / `package.json` / `LICENSE` 与 `scripts/`、`references/`，
 黑名单排掉 `*.db` / `*payload*.json` / `ws-*.json` / `.git/` / `node_modules/`，
 产物**不含** `yht_access_token`与会话库。`references/coach-chat-log.md` 含问答正文，外发前人工过一遍。
 
@@ -100,6 +100,8 @@ zip 由脚本**纯 Node 写出**（自带 CRC-32），不 spawn 外部工具 —
 ```bash
 python -c "import zipfile; z=zipfile.ZipFile('dist/youzone-coach.skill'); print(z.testzip() or 'CRC OK', len(z.namelist()))"
 ```
+
+改过任何 Markdown 后跑 `npm run docs:check`（CI 同款检查；本地会按 `.gitignore` 跳过 `dist/`、`logs/` 等生成物）。
 
 ## 教练怎么发现（换账号 / 换机器）
 

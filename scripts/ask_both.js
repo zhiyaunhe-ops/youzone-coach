@@ -47,7 +47,8 @@ function post(peer) {
           catch { resolve({ ok: false, error: 'bad JSON: ' + b.slice(0, 300) }); }
         });
       });
-    req.setTimeout(timeout + 30000);
+    req.setTimeout(timeout + 30000, () =>
+      req.destroy(new Error('client timeout after ' + (timeout + 30000) + 'ms')));
     req.on('error', e => resolve({ ok: false, error: e.message }));
     req.end(body);
   });

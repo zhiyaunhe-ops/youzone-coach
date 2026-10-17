@@ -141,7 +141,6 @@ function envOverride(alias) {
 
 const ALIAS_RULES = {
   impl: {
-    env: 'COACH_IMPL',
     score: t =>
       t === '高级版实施总教练（多智能验证版）' ? 100 :
       t === '高级版实施总教练' ? 95 :
@@ -150,7 +149,6 @@ const ALIAS_RULES = {
       /实施总教练/.test(t) ? 40 : 0,
   },
   delivery: {
-    env: 'COACH_DELIVERY',
     score: t =>
       t === '交付赋能总教练' ? 100 :
       /^交付赋能总教练/.test(t) ? 95 :
@@ -162,13 +160,11 @@ const ALIAS_RULES = {
 function pickBest(coaches, alias) {
   const rule = ALIAS_RULES[alias];
   const ov = envOverride(alias);
-  if (ov.id) {
-    const hit = coaches.find(c => c.id === ov.id);
-    if (hit) return hit;
-  }
-  if (ov.title) {
-    const hit = coaches.find(c => c.title === ov.title);
-    if (hit) return hit;
+  // An explicit override is a PIN: if the pinned id/title is not visible, do NOT
+  // silently fall back to a same-keyword agent — that would ask the wrong coach.
+  if (ov.id || ov.title) {
+    return coaches.find(c =>
+      (ov.id && c.id === ov.id) || (ov.title && c.title === ov.title)) || null;
   }
   let best = null, bestScore = 0;
   for (const c of coaches) {
@@ -188,6 +184,29 @@ function fmtCandidates(coaches) {
     .join(', ');
 }
 
+// Pure resolver against an already-fetched list: {id,title} or null.
+// Exported so callers that already have the list (discover CLI, batched tools)
+// don't re-read the client once per alias.
+function resolveFrom(list, token) {
+  const key = String(token == null ? '' : token).trim();
+  const lower = key.toLowerCase();
+  const alias = (!key || ['impl', 'implementation', 'coach'].includes(lower)) ? 'impl'
+    : (['delivery', 'empower'].includes(lower) ? 'delivery' : null);
+  if (!list.length) return null;
+  if (alias) {
+    const best = pickBest(list, alias);
+    if (best) return best;
+  }
+  if (!key) return pickBest(list, 'impl');
+  if (lower.startsWith('ipa_')) {
+    return list.find(c => c.id.toLowerCase() === lower) || null;
+  }
+  const want = normTitle(key);
+  return list.find(c => normTitle(c.title) === want)
+    || list.find(c => normTitle(c.title).includes(want))
+    || null;
+}
+
 // Resolve a coach to {id, title} from the live list.
 //   null / "impl" / "implementation" / "coach" -> implementation coach
 //   "delivery" / "empower"                       -> delivery coach
@@ -196,19 +215,15 @@ function fmtCandidates(coaches) {
 // If the active tab has no coach, it retries once on the 智能体 catalog tab.
 async function resolveCoach(token, { waitMs } = {}) {
   const key = String(token == null ? '' : token).trim();
-  const lower = key.toLowerCase();
-  const alias = (!key || ['impl', 'implementation', 'coach'].includes(lower)) ? 'impl'
-    : (['delivery', 'empower'].includes(lower) ? 'delivery' : null);
-
   let coaches = await discoverCoaches({ waitMs });
-  let hit = match(coaches, alias, key, lower);
+  let hit = resolveFrom(coaches, key);
 
   if (!hit) {
     // Maybe the client was on the 全部 tab (conversations only): try the catalog.
     const catalog = await discoverCoaches({ waitMs, activateAgentTab: true });
     if (catalog.length !== coaches.length || catalog.some((c, i) => !coaches[i] || c.id !== coaches[i].id)) {
       coaches = catalog;
-      hit = match(coaches, alias, key, lower);
+      hit = resolveFrom(coaches, key);
     }
   }
   if (hit) return hit;
@@ -217,24 +232,8 @@ async function resolveCoach(token, { waitMs } = {}) {
     '(is YonZone open and the message list loaded? try: node scripts/discover_coaches.js)');
   throw new Error('no coach matching "' + key + '" among ' + (fmtCandidates(coaches) || coaches.length + ' agents') +
     ' — set COACH_IMPL_TITLE / COACH_DELIVERY_TITLE to pin an unusual name');
-
-  function match(list, aliasKey, raw, lowerRaw) {
-    if (!list.length) return null;
-    if (aliasKey) {
-      const best = pickBest(list, aliasKey);
-      if (best) return best;
-    }
-    if (!raw) return pickBest(list, 'impl');
-    if (lowerRaw.startsWith('ipa_')) {
-      const byId = list.find(c => c.id.toLowerCase() === lowerRaw);
-      if (byId) return byId;
-      return null;
-    }
-    const want = normTitle(raw);
-    const exact = list.find(c => normTitle(c.title) === want);
-    if (exact) return exact;
-    return list.find(c => normTitle(c.title).includes(want)) || null;
-  }
 }
 
-module.exports = { discoverCoaches, resolveCoach, coachList, readList, normTitle, AGENT_TAB_SEL };
+module.exports = {
+  discoverCoaches, resolveCoach, resolveFrom, coachList, readList, normTitle, AGENT_TAB_SEL,
+};

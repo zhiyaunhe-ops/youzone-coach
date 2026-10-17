@@ -2,9 +2,19 @@
 // Validate relative Markdown links, GitHub heading anchors and discoverability.
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const ignored = new Set(['.git', 'node_modules', '.venv', 'server/data']);
+const ignored = new Set(['.git', 'node_modules', '.venv', 'server/data', 'dist', 'logs', 'tmp']);
+// Generated trees (dist/, logs/, tmp/ …) are gitignored: skip them exactly like
+// a fresh CI checkout does, so `npm run docs:check` passes locally even after
+// `npm run pack` / smoke tests left Markdown artefacts behind.
+try {
+  const out = execFileSync('git',
+    ['-C', root, 'ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z'],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  for (const rel of out.split('\0')) if (rel) ignored.add(rel.replace(/\/+$/, ''));
+} catch { /* not a git checkout (e.g. unpacked .skill) — keep the static list */ }
 function walk(dir = root) {
   return fs.readdirSync(dir, {withFileTypes:true}).flatMap(entry => {
     const abs = path.join(dir, entry.name), rel = path.relative(root, abs).split(path.sep).join('/');
