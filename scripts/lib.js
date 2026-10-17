@@ -14,12 +14,15 @@ const { DatabaseSync } = require('node:sqlite');
 // anyone can write them into a frame and reach the same agent (subject to that
 // user's own authorization in their tenant). Sessions and data are isolated one
 // level down, at `chatId` + `yht_access_token`.
-// On a different account/tenant, discover the IDs rather than trusting these:
-//   node scripts/list_peers.js        (enumerate ipa_ conversations in the local DB)
-//   node scripts/probe_peer_scope.js  (tenantId / chatId / digitalCode per peer)
+//
+// The server / ask_both / discovery path no longer trust these constants: they
+// resolve coaches LIVE from the running client (scripts/coach-discover.js,
+// `node scripts/discover_coaches.js`). The constants remain as the offline
+// fallback for DB-only tools (dump_chat.js / coach_headless.js) and can be
+// overridden per deployment with COACH_IMPL_ID / COACH_DELIVERY_ID.
 // Evidence: references/peer-id-scope.md
-const PEER_COACH = 'ipa_ff71df3a-f6ee-410a-af14-9dd51e60e9e5'; // 高级版实施总教练（多智能验证版）
-const PEER_COACH_DELIVERY = 'ipa_2c491083-4854-4206-aac7-27d122c364bd'; // 交付赋能总教练
+const PEER_COACH = process.env.COACH_IMPL_ID || 'ipa_ff71df3a-f6ee-410a-af14-9dd51e60e9e5'; // 高级版实施总教练（多智能验证版）
+const PEER_COACH_DELIVERY = process.env.COACH_DELIVERY_ID || 'ipa_2c491083-4854-4206-aac7-27d122c364bd'; // 交付赋能总教练
 
 // Alias -> peer id. There are (at least) two coaches and every question must go to
 // BOTH: they are backed by different agent graphs and routinely disagree.

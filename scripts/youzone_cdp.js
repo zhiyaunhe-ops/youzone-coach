@@ -145,10 +145,38 @@ async function sendQuestion(cdp, text) {
   return true;
 }
 
-// Open a public-account conversation from the main page session list.
+// Open a public-account conversation from the left list.
+// The client has two renderings depending on the active tab:
+//   * 全部 tab   -> li.all-item  (conversations you already have)
+//   * 智能体 tab -> li.agent-item (full agent catalog; rows for agents you have
+//                   NEVER chatted with also exist — clicking starts the chat)
+// Try both, then activate the 智能体 tab once and retry.
+const ROW_SELECTORS = peerId => [
+  `li.agent-item[data-id="${peerId}"]`,
+  `li.all-item[data-id="${peerId}"]`,
+];
+const AGENT_TAB_SEL = '[id="-10_menu"]';
+
 async function openConversation(cdpMain, peerId) {
-  const sel = `li.all-item[data-id="${peerId}"]`;
-  await cdpMain.eval(JS_CLICK(sel));
+  const found = async sel => {
+    try { return await cdpMain.eval(`document.querySelectorAll(${JSON.stringify(sel)}).length`); }
+    catch { return 0; }
+  };
+  for (const sel of ROW_SELECTORS(peerId)) {
+    if (await found(sel)) { await cdpMain.eval(JS_CLICK(sel)); return true; }
+  }
+  // The catalog tab may just not be active (or the client was left on 全部).
+  try {
+    if (await cdpMain.eval(`!!document.querySelector(${JSON.stringify(AGENT_TAB_SEL)})`)) {
+      await cdpMain.eval(JS_CLICK(AGENT_TAB_SEL));
+      await sleep(1800);
+      for (const sel of ROW_SELECTORS(peerId)) {
+        if (await found(sel)) { await cdpMain.eval(JS_CLICK(sel)); return true; }
+      }
+    }
+  } catch {}
+  throw new Error('conversation row not found for ' + peerId +
+    ' (open the 智能体 tab in YonZone, or run node scripts/discover_coaches.js)');
 }
 
 // Bring YonZone to the foreground (renderer throttling breaks evals otherwise).

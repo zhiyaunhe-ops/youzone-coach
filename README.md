@@ -2,13 +2,16 @@
 
 友空间（YonZone Electron 客户端）里**两个** AI 教练的接入工具链。
 
-| peer 别名 | 显示名 | 强项 |
+| peer 别名 | 显示名（运行时按标题发现） | 强项 |
 | --- | --- | --- |
 | `impl`（默认） | 高级版实施总教练（多智能验证版） | 实施/配置/字段/节点 |
 | `delivery` | 交付赋能总教练 | 交付物/培训/知识库检索 |
 
 教练是服务端多智能体，**没有公开 API**，本仓库是实测逆向出来的四条通道 + 问答记录。
 两者由不同的智能体图驱动，会答不上来也会互相矛盾 —— **同一个问题请一次问两个**（`ask_both.js`）。
+
+**换机器/换账号不用改代码**：教练 id 由 `coach-discover.js` 从客户端左侧「智能体」目录实时解析（精确名优先）。
+目录列的是**所有已授权智能体**，点一行就能开新会话 —— 所以**从没和这两个教练说过话的新机器也能直接用**。
 
 > 面向 AI agent 的完整操作说明在 `SKILL.md`，协议细节在 `references/protocol-map.md`。
 
@@ -23,7 +26,10 @@
 ```bash
 npm test                                   # 离线自检，不联网、不碰数据库
 
-# 首选：一次问两个教练，产出合并markdown
+# 首次/换账号：确认这台机器解析到哪两个教练（--all / --json / --resolve delivery）
+node scripts/discover_coaches.js
+
+# 首选：一次问两个教练（按别名，不写死 id），产出合并markdown
 node scripts/bg.js coach_ask_server.js          # 通道 C 前置（后台起、无窗口；只需一次）
 node scripts/bg.js ask_both.js "你的问题" --timeout 240000 --out . --tag mytag
 node scripts/bg.js --tail ask_both              # 看进度（日志在 logs/）
@@ -46,9 +52,9 @@ node scripts/ask.js "你好，请用一句话介绍你自己"
 node scripts/ask.js "问题" --peer delivery
 
 # 不知道某个 ipa_ 是谁？
-node scripts/list_peers.js                 # 枚举库里所有机器人会话
+node scripts/discover_coaches.js --all     # 实时目录：当前登录可见的全部 ipa_ 智能体（推荐）
+node scripts/list_peers.js                 # 只读本地库：你聊过的机器人会话
 node scripts/identify_peers.js ipa_xxx     # 看它最近答了什么，判定身份
-node scripts/list_conversations.js         # 读 webview 会话列表拿真实显示名
 ```
 
 ## 四条通道
@@ -57,10 +63,11 @@ node scripts/list_conversations.js         # 读 webview 会话列表拿真实�
 | --- | --- | --- | --- |
 | A 只读消息库 | `dump_chat.js` | 无（共享读复制 + GBK 解码） | 读历史问答、不打断用户 |
 | B CDP 驱动 | `youzone_cdp.js` | YonZone 开 CDP `127.0.0.1:8089` | 探页面、填框发送、DOM 取证 |
-| C 本地 ask API | `coach_ask_server.js` | B | 把教练变成 `POST /ask {q,peer}` 的同步接口 |
+| C 本地 ask API | `coach_ask_server.js` | B | 把教练变成 `POST /ask`（默认异步 taskId，`/result`/`/stream` 取终稿；`mode:"sync"` 兼容旧行为） |
 | D 无头直连 | `coach_headless.js` | 有效 token | **默认禁用**（需 `--kick-ok`）：会上第二个 IM 会话，把桌面端顶到登录页 |
+| 发现教练 | `discover_coaches.js` + `coach-discover.js` | B（客户端在跑） | 从「智能体」目录实时解析 impl/delivery，不写死 id、不要求聊过 |
 | 后台启动 | `bg.js` | — | detached + `windowsHide` 跑任何脚本、零窗口；日志落 `logs/`（`--list`/`--tail`/`--kill`） |
-| 双问 | `ask_both.js` | C | 同一问题问两个教练，落合并 markdown |
+| 双问 | `ask_both.js` | C | 按别名问两个教练，落合并 markdown |
 | 体检 | `preflight.js` | — | 逐项检查前置条件并说明当前哪条通道可用 |
 
 ## 凭据来源（通道 D）
@@ -94,18 +101,25 @@ zip 由脚本**纯 Node 写出**（自带 CRC-32），不 spawn 外部工具 —
 python -c "import zipfile; z=zipfile.ZipFile('dist/youzone-coach.skill'); print(z.testzip() or 'CRC OK', len(z.namelist()))"
 ```
 
-## peerId 换账号怎么办
+## 教练怎么发现（换账号 / 换机器）
 
-`lib.js` 里两个 `ipa_` 是**用友全局智能体注册 ID**，别人写同样的值能连到同一个智能体；隔离发生在下一层的 `chatId` + `yht_access_token`，所以**把本skill 装给别人是安全的**。
-
-对方需要自己发现 ID：
+教练 id 是**用友全局智能体注册 ID**，但不同租户/账号可见的列表不一定一样，所以仓库不把 id 写死：
 
 ```bash
-node scripts/list_peers.js# 枚举他本地库里的 ipa_ 会话
-node scripts/probe_peer_scope.js         # 每peer's tenantId/chatId/digitalCode + 是否同租户
+node scripts/discover_coaches.js              # 解析 impl/delivery 并打印 id
+node scripts/discover_coaches.js --all        # 当前登录可见的全部 ipa_ 智能体
+node scripts/discover_coaches.js --json       # 机器可读
+node scripts/discover_coaches.js --resolve "某个标题片段"
 ```
 
-然后改 `scripts/lib.js` 顶部的 `PEER_COACH` / `PEER_COACH_DELIVERY`。实测证据见 `references/peer-id-scope.md`。
+解析规则：**精确名优先**（`高级版实施总教练（多智能验证版）` / `交付赋能总教练`），其次关键词；
+目录里「超级版交付总教练」「高级版客开总教练」「实施总教练」等几十个近名智能体不会被误选。
+名字真的不同就设 `COACH_IMPL_TITLE` / `COACH_DELIVERY_TITLE`（或 `_ID`）；服务端默认教练用 `COACH_PEER`。
+
+为什么新机器也能用：客户端「智能体」tab 是**完整目录**（本机 882 个），不是「聊过的会话」；
+点击目录行即开始新会话，所以**从没和教练说过话**也可以直接问。旧的 `li.all-item` 只有历史会话，现在只作兜底。
+隔离仍发生在 `chatId` + `yht_access_token`（peerId 只是全局注册 id），**把本 skill 装给别人是安全的**。
+实测证据见 `references/peer-id-scope.md`。
 
 ## 安全
 
@@ -114,8 +128,10 @@ node scripts/probe_peer_scope.js         # 每peer's tenantId/chatId/digitalCode
 
 ## 已知限制
 
+- **发现依赖运行中的客户端**：`discover_coaches.js` / 通道 C 需要 YonZone 已登录且 CDP 已开；租户没授权这两个教练时列表里就没有它们，会明确报 `no coach matching ...`。
 - 无头发出的提问**不落本地消息库**（客户端只显示回答），服务端历史是完整的。
 - 客户端掉到扫码登录页时 CDP 里没有 cookie、库里的 token 也已过期，必须先扫码登录（`preflight.js` 会明确指出）。
+- ask 服务是**串行**的：多个调用方/子 Agent 并发提交会排队（`/result` 的 `queuedMs` 能看出排了多久）。
 - 教练同一问题多轮答案可能不一致，取到的节点/字段/公式必须回环境复核。
 - 未实现 `permessage-deflate`：若服务端协商该扩展，客户端会**明确报错**而不是静默卡死。
 

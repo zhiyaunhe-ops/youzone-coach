@@ -4,6 +4,8 @@
 
 下面每条都有本地库（`YYIMDB_example-member_esn.db`，2026-10-05 实测）证据，不是推测。
 
+> **2026-10-17 更新（v0.4.0）：不再需要手工配 ID。** 教练身份由 `scripts/coach-discover.js` 从客户端左侧「智能体」目录实时解析（精确名优先），用 `scripts/discover_coaches.js` 可查看解析结果；目录里列出所有已授权智能体，**没聊过也能点开建会话**。下文「需要自己配 ID / 替换 `lib.js` 常量」的说法保留作历史记录，已不是操作步骤。
+
 ---
 
 ## 1. peerId 是什么
@@ -48,9 +50,9 @@ ipa_<peerId去掉前缀>.esn.upesn@pubaccount.im.yyuap.com
 | 能看到我的问答记录吗 | **不能** | 记录在本地 `YYIMDB_<memberId>_esn.db`，memberId = `example-member` 是当前用户账号 |
 | 能复用我的 `yht_access_token` 吗 | **不能** | token 绑定当前用户账号；`coach_headless.js` 实测会拿它去换 `imToken`（`GET /yonbip-ec-base/user/pc/imToken`），服务端按登录态判定 |
 | 能读到租户 `example-tenant` 的数据吗 | **不能** | 数据面走 `chatId` + token 双重校验 |
-| 他也用这个 skill 会怎样 | **需要自己配 ID**：他必须先在**自己的**友空间里找到这两个数字人，拿到他自己环境里的 `peerId` / `digitalCode` / `tenantId` / `chatId` | `coach_headless.js` 的身份就是从**本地库最近一条提问行**取的，不是写死的 |
+| 他也用这个 skill 会怎样 | **v0.4.0 起自动发现**：跑 `node scripts/discover_coaches.js`，从他自己客户端的「智能体」目录按显示名解析出 `peerId`，不依赖下文的手工配置；无头通道仍要从本地库最近一条提问行取身份 | `coach-discover.js` 读实时列表；`coach_headless.js` 的身份取**本地库最近一条提问行**，不是写死的 |
 
-**实践结论：把 skill 打包给别人是安全的**，别人装上后跑 `node scripts/list_peers.js` 就能枚举出他环境里的 `ipa_` 会话，替换 `lib.js` 顶部的常量即可。ID 写在代码里不构成信息泄露——它只是个智能体的公开寻址符。
+**实践结论：把 skill 打包给别人是安全的**，别人装上后跑 `node scripts/discover_coaches.js` 就能看到他环境里的两个教练（按显示名解析；`--all` 看全部 `ipa_` 智能体）。ID 写在代码里不构成信息泄露——它只是个智能体的公开寻址符；v0.4.0 起运行时也不再依赖写死的 ID。
 
 ⚠️ **但有一种情况会真出问题**：如果用友把某个数字人做成了**租户私有**（即 `peerId` 只在 `example-tenant` 内有效），那别人换了 ID 也连不上。**这一点我无法从本地库判断**，需要拿另一个账号实测。我倾向于不是私有——因为这两个教练明显是用友官方出品（数字人编码 `DG…` 走统一注册，意图流是 `BIP高级版-友问友答_V1` / `智能交付-YonBIP5产品知识AI助手`），且 `coach_ask_server.js` 的 peer 路由是纯客户端切换、与服务端无关。
 
