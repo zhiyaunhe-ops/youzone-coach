@@ -5,7 +5,7 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
-const { PEER_COACH, copyDb, openCopy, decodeText, parseMessage } = require('./lib');
+const { PEER_COACH, copyDb, openCopy, decodeText, parseMessage, effectiveContent } = require('./lib');
 
 const args = process.argv.slice(2);
 const opt = (n, d) => { const i = args.indexOf('--' + n); return i >= 0 ? args[i + 1] : d; };
@@ -23,9 +23,14 @@ const { tmp, dbPath } = copyDb();
 try {
   const db = openCopy(dbPath);
   const rows = db.prepare(
-    `SELECT id, CAST(contentType AS BLOB) ct, ts, CAST(content AS BLOB) c
+    `SELECT id, CAST(contentType AS BLOB) ct, ts, CAST(content AS BLOB) c,
+            CAST(isLargeText AS BLOB) lt, CAST(largeTextContent AS BLOB) ltc,
+            CAST(largeTextUrl AS BLOB) ltu
      FROM newMessage WHERE oppositeId = ? ORDER BY ts ASC`
-  ).all(PEER).map(r => ({ id: r.id, ct: Number(decodeText(r.ct)), ts: r.ts, raw: decodeText(r.c) }));
+  ).all(PEER).map(r => {
+    const ec = effectiveContent(r);
+    return { id: r.id, ct: Number(decodeText(r.ct)), ts: r.ts, raw: ec.raw };
+  });
   db.close();
 
   const pairs = [];

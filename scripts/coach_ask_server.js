@@ -22,7 +22,7 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const { randomUUID } = require('node:crypto');
-const { copyDb, openCopy, decodeText, parseMessage } = require('./lib');
+const { copyDb, openCopy, decodeText, parseMessage, effectiveContent } = require('./lib');
 const cd = require('./coach-discover');
 const zc = require('./youzone_cdp');
 
@@ -48,13 +48,18 @@ function withDb(fn) {
 function peerRows(db, peer) {
   if (!peer) throw new Error('peerRows: peer id required');
   const rows = db.prepare(
-    `SELECT rowid rid, id, CAST(contentType AS BLOB) ct, ts, CAST(content AS BLOB) c
+    `SELECT rowid rid, id, CAST(contentType AS BLOB) ct, ts, CAST(content AS BLOB) c,
+            CAST(isLargeText AS BLOB) lt, CAST(largeTextContent AS BLOB) ltc,
+            CAST(largeTextUrl AS BLOB) ltu
      FROM newMessage WHERE oppositeId = ? ORDER BY ts ASC`
   ).all(peer);
-  return rows.map(r => ({
-    rid: r.rid, id: r.id, ct: Number(decodeText(r.ct)), ts: r.ts,
-    raw: decodeText(r.c),
-  }));
+  return rows.map(r => {
+    const ec = effectiveContent(r);
+    return {
+      rid: r.rid, id: r.id, ct: Number(decodeText(r.ct)), ts: r.ts,
+      raw: ec.raw, largeText: ec.largeText, largeTextUrl: ec.largeTextUrl,
+    };
+  });
 }
 
 // ---- conversation switching (two coaches share one webview) -----------------

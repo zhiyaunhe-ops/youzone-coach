@@ -140,6 +140,18 @@ function botParts(j) {
   return { inner: j, ext: {} };
 }
 
+// Some bot answers are stored out-of-line: isLargeText=1 means the real bot JSON
+// (the same {extend:"..."} shape) lives in largeTextContent, while content holds
+// only {extend:{completeContent:{enable:true,url}}}. Reading content alone yields
+// an empty text and false timeout. Prefer largeTextContent; keep the URL as a
+// fallback for rows whose large text has not been materialised locally.
+function effectiveContent(row) {
+  const isLarge = row.lt !== undefined && Number(decodeText(row.lt)) === 1;
+  const full = isLarge && row.ltc !== undefined ? decodeText(row.ltc) : '';
+  const url = isLarge && row.ltu !== undefined ? decodeText(row.ltu) : '';
+  return { raw: full || decodeText(row.c), largeText: isLarge, largeTextUrl: url || null };
+}
+
 function parseMessage(ct, raw) {
   const n = Number(ct);
   try {
@@ -157,14 +169,28 @@ function parseMessage(ct, raw) {
     }
     if (n !== 18) return { kind: 'other' };
     const e = botParts(j).ext;
-    const resp = (e.responses || [])[0];
-    const sd = resp && resp.data && resp.data.showData;
-    let text = '';
-    if (typeof sd === 'string') { try { text = (asJson(sd) || {}).text || ''; } catch { text = ''; } }
-    else if (sd && typeof sd === 'object') text = sd.text || '';
-    if (!text && resp && resp.data && typeof resp.data.text === 'string') text = resp.data.text;
+    // A bot row can accumulate the whole response timeline: ack, asset cards,
+    // language note, then the real final answer. The last non-empty response is
+    // the final one (the externalised row keeps every chunk in largeTextContent),
+    // so never assume responses[0].
+    const rs = e.responses || [];
+    let text = '', resp = null;
+    for (let i = rs.length - 1; i >= 0; i--) {
+      const cand = rs[i];
+      const sd = cand && cand.data && cand.data.showData;
+      let t = '';
+      if (typeof sd === 'string') { try { t = (asJson(sd) || {}).text || ''; } catch { t = ''; } }
+      else if (sd && typeof sd === 'object') t = sd.text || '';
+      if (!t && cand && cand.data && typeof cand.data.text === 'string') t = cand.data.text;
+      if (t) { text = t; resp = cand; break; }
+    }
+    // Externalised answer: the client keeps the body behind completeContent.url and
+    // the local row carries no text. Surface the URL so callers can fetch it when
+    // largeTextContent is unavailable (effectiveContent normally supplies the body).
+    const cc = e.completeContent;
+    const completeContentUrl = !text && cc && cc.enable && cc.url ? cc.url : null;
     return {
-      kind: 'answer', final: !!text, text,
+      kind: 'answer', final: !!text, text, completeContentUrl,
       traceId: e.traceId, questionId: e.questionId, chatId: e.chatId,
       steps: (e.thoughtChainResponses || []).map(s => ({ type: s.type, stepName: s.stepName, result: s.result })),
       meta: e,
@@ -225,5 +251,5 @@ function questionSnapshot(peer = PEER_COACH, log = null) {
 module.exports = {
   PEER_COACH, PEER_COACH_DELIVERY, PEERS, PEER_NAMES, resolvePeer, peerName,
   dbDir, dbGlob, memberIdOf, copyDb, openCopy, decodeText, rowAllText,
-  parseMessage, messageStreamUrl, latestQuestion, questionSnapshot,
+  parseMessage, effectiveContent, messageStreamUrl, latestQuestion, questionSnapshot,
 };

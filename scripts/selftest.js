@@ -135,6 +135,38 @@ t('clarify reply uses data.text (answerType 97)', () => {
   assert.strictEqual(p.final, true);
   assert.strictEqual(p.text, '你是想问哪个组织？');
 });
+t('multi-response row uses the last non-empty response (large-text timeline)', () => {
+  const ext = JSON.stringify({ responses: [
+    { data: { text: '正在整理，请稍候～' } },
+    { data: { text: '中间结果' } },
+    { data: { text: '### 终稿\n完整答案' } },
+  ] });
+  const raw = JSON.stringify({ contentType: 18, content: JSON.stringify({ extend: ext }) });
+  const p = lib.parseMessage(18, raw);
+  assert.strictEqual(p.kind, 'answer');
+  assert.strictEqual(p.final, true);
+  assert.strictEqual(p.text, '### 终稿\n完整答案');
+});
+t('externalised answer exposes completeContent URL when text is empty', () => {
+  const ext = JSON.stringify({ completeContent: { enable: true, url: 'https://imoss.example/x.txt' } });
+  const raw = JSON.stringify({ contentType: 18, content: JSON.stringify({ extend: ext }) });
+  const p = lib.parseMessage(18, raw);
+  assert.strictEqual(p.kind, 'answer');
+  assert.strictEqual(p.final, false);
+  assert.strictEqual(p.text, '');
+  assert.strictEqual(p.completeContentUrl, 'https://imoss.example/x.txt');
+});
+t('effectiveContent prefers largeTextContent for isLargeText rows', () => {
+  const full = JSON.stringify({ extend: JSON.stringify({ responses: [{ data: { text: '大文本正文' } }] }) });
+  const stub = JSON.stringify({ extend: JSON.stringify({ completeContent: { enable: true, url: 'https://imoss.example/x.txt' } }) });
+  const large = lib.effectiveContent({ lt: '1', ltc: full, ltu: 'https://imoss.example/x.txt', c: stub });
+  assert.strictEqual(large.largeText, true);
+  assert.strictEqual(lib.parseMessage(18, large.raw).text, '大文本正文');
+  assert.strictEqual(large.largeTextUrl, 'https://imoss.example/x.txt');
+  const normal = lib.effectiveContent({ lt: '0', ltc: '', ltu: '', c: stub });
+  assert.strictEqual(normal.largeText, false);
+  assert.strictEqual(normal.raw, stub);
+});
 t('WS envelope shape parses the same as the DB row shape', () => {
   const ext = JSON.stringify({ responses: [{ data: { showData: JSON.stringify({ text: '答案正文' }) } }], traceId: 'tr-2' });
   const wsAnswer = JSON.stringify({ id: 'M1', contentType: 18, content: JSON.stringify({ extend: ext }) });

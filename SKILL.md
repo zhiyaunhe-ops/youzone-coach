@@ -110,7 +110,7 @@ curl -N 127.0.0.1:8765/stream?taskId=<uuid>
 - 🚨 **会话校验要双条件**（实测修过的真 bug）：`coach_ask_server.js` 的 `ensureConversation` 曾经**只查主页面 hash**，但两个教练共用一个 `single-agent` webview，切换后 hash 不一定同步更新 → **问题会被静默发进另一个教练的会话**（看不到报错，只是答案怪）。现已改为**双条件**：hash 匹配 **且** webview 标题 == 教练显示名；重试 16 次（i=0/6 各点一次），不符时报 misroute。标题比较前会去掉列表里的「智能体」标签（干净名字在 `.mid-info[title]`）；点会话行兼容 `li.agent-item`（智能体目录）和 `li.all-item`（全部会话）两种 DOM。修改后回归测过 impl/delivery 两个会话（2026-10-17 又用新发现逻辑复测通过）。
 - 原理：置前窗口 → CDP 驱动 secretary webview 填框点发送 → 共享读复制消息库轮询终稿（基线用消息 **ts+id，绝不能用 rowid**——最新消息 rowid 反而更小，历史分页往上追加）。
 - **中文千万别走 curl 命令行 -d 参数**：本机 curl 会把 argv 按 ANSI(GBK) 编码发出（实测 `你好`→`c4e3bac3`），教练收到乱码还会用 answerType=97 反问。用 `ask.js`（node argv 是干净 UTF-8）或 `curl --data-binary @file`。
-- 服务一次只跑一问（内部串行）；答案文本在 `extend.responses[0].data.showData.text`，澄清/反问类在 `data.text`（answerType=97），两者都要解析。
+- 服务一次只跑一问（内部串行）；答案文本取 `extend.responses` 中**最后一条非空 response**（不是 `responses[0]`——外置大文本行会累积 ack→卡片→终稿多条）；普通答案在 `showData.text`，澄清/反问类在 `data.text`（answerType=97），两者都要解析。
 
 ## 通道 A：只读本地消息库（不打断用户，读历史用它）
 
@@ -120,7 +120,8 @@ curl -N 127.0.0.1:8765/stream?taskId=<uuid>
 - 本地库里的 `ipa_` 会话数**很少**（本机 2026-10-17 只有 4 个），而客户端「智能体」目录有 882 个——**别用库里的条数判断教练在不在**。库里的其它 `ipa_` 多是系统通知/数字人，别当成第三个教练；识别用 `scripts/identify_peers.js`，或直接 `discover_coaches.js` 看实时列表。
 - ⚠️ `list_peers.js` 只读本地库、按「有提问行」过滤，**会漏**（本机只看到个位数）。要全量看**当前登录可见的智能体**，用 `scripts/discover_coaches.js --all`（读客户端目录，不依赖历史）；库内统计用 `newMessage.oppositeId LIKE 'ipa_%'`。
 - 显示名的可靠来源是**客户端左侧「智能体」目录的 `.mid-info[title]`**（与 webview 标题一致，不带「智能体」标签）。`list_conversations.js` 已改为调用 `coach-discover.js` 的兼容入口。
-- 消息体 JSON：用户侧 contentType=2，`content.content`=问句，`content.robotBusiness` 带 chatId/tenantId/**yht_access_token**/callback；机器人侧 contentType=18，`content.extend` 是**再一层 JSON 字符串**（答案 `responses[0].data.showData.text`、意图流 `thoughtChainResponses[]`、traceId/questionId）。
+- 消息体 JSON：用户侧 contentType=2，`content.content`=问句，`content.robotBusiness` 带 chatId/tenantId/**yht_access_token**/callback；机器人侧 contentType=18，`content.extend` 是**再一层 JSON 字符串**（答案取 `extend.responses` 最后一条非空 response 的 `showData.text`/`data.text`、意图流 `thoughtChainResponses[]`、traceId/questionId）。
+- 🚨 **长文本答案看 `isLargeText`/`largeTextContent`**（2026-10-22 实测）：当 `isLargeText=1` 时，`content` 里只有 `{extend:{completeContent:{enable:true,url:"https://imoss...txt"}}}`，**正文不在 content**；完整 `{extend:"..."}`（含全部 responses）在同表 `largeTextContent` 列，外置 URL 是同一份终稿。只读 content 会得到空文本、轮询判定“未捕获终稿”（交付教练 2026-10-22 19:59 就因此误报超时）。`lib.effectiveContent()` 已优先取 largeTextContent，`parseMessage()` 取最后一条非空 response；`completeContentUrl` 仅作 largeTextContent 缺失时的兜底。
 - 导出记录：`node scripts/dump_chat.js`（默认教练会话 → references/coach-chat-log.md；`--peer`/`--out`/`--limit`）。
 - 安全：载荷含明文 `yht_access_token`，副本读完即删，token 别外传。
 
@@ -186,7 +187,8 @@ window['nc-lightapp-front'].ajax({
 
 ## 坑位
 
-- **左侧列表有两套 DOM**：「智能体」tab = `li.agent-item`（完整目录，本机 882 个，**含从没聊过的**）；「全部」tab = `li.all-item`（只有已有会话）。只查一种会读到 0 行，症状就是 `no ipa_ coach conversations found in the live YonZone list`。`coach-discover.js` 现在两处都读，并会在需要时切到「智能体」tab。
+- **左侧列表有两套 DOM**：「智能体」tab = `li.agent-item`（完整目录，本机 882 个，**含从没聊过的**）；「全部」tab = `li.all-item`（只有已有会话）。只查一种会读到 0 行，症状就是 `no ipa_ agents found in the live YonZone list`。`coach-discover.js` 现在两处都读，并会在需要时切到「智能体」tab。
+- **长文本答案别只读 `content`**（见通道 A 的 `isLargeText` 条）：`isLargeText=1` 的大文本行正文在 `largeTextContent`，`content` 只剩 `completeContent.url`；只读 content 会空文本→误报“未捕获终稿”。
 - **列表标题带「智能体」标签**：`.title` 的文本是 `交付赋能总教练 智能体`，而 webview 标题是 `交付赋能总教练`。名字取 `.mid-info[title]`，比较前统一去掉后缀。
 - **「智能体」tab 的 id 是 `-10_menu`**：以 `-`+数字开头，`#-10_menu` 不是合法 CSS 选择器（`querySelector` 直接抛 DOMException）→ 用 `[id="-10_menu"]` 或 `getElementById('-10_menu')`。
 - **目录里有几十个同关键词智能体**（超级版交付总教练、高级版客开总教练、实施总教练…）→ 别名解析必须精确名优先，**绝不能取列表第一行**。
