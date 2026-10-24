@@ -1,6 +1,6 @@
 {
   "name": "youzone-coach",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "友空间（YonZone）两个 AI 教练（高级版实施总教练 / 交付赋能总教练）的接入工具链：运行时按标题发现教练（不写死 id、没聊过也能用）、本地消息库读取、CDP 驱动、IM WebSocket + SSE 协议直连、异步 taskId 的本地 ask API",
   "license": "Apache-2.0",
   "engines": {
@@ -8,6 +8,7 @@
   },
   "scripts": {
     "test": "node --no-warnings scripts/selftest.js",
+    "test:queue": "node scripts/queue_selftest.js",
     "preflight": "node --no-warnings scripts/preflight.js",
     "discover": "node scripts/discover_coaches.js",
     "headless": "node scripts/coach_headless.js",
@@ -15,6 +16,7 @@
     "ask-server": "node scripts/coach_ask_server.js",
     "ask": "node scripts/ask.js",
     "ask-both": "node scripts/ask_both.js",
+    "queue": "node scripts/queue.js",
     "docs:check": "node scripts/check-doc-links.mjs",
     "dump": "node scripts/dump_chat.js",
     "pack": "node scripts/pack.js"

@@ -84,33 +84,41 @@ POST /ask {"q":"...", "peer":"delivery", "timeoutMs":180000}
 # 1) 提交，立刻拿 taskId（不阻塞）
 curl -s -X POST 127.0.0.1:8765/ask -H 'Content-Type: application/json' \
   --data-binary @q.json            # q.json: {"q":"问题","peer":"delivery","timeoutMs":180000}
-# → {"ok":true,"async":true,"taskId":"<uuid>","poll":"GET /result?taskId=<uuid>",
-#     "stream":"GET /stream?taskId=<uuid>"}
+# → {"ok":true,"async":true,"taskId":"<uuid>","phase":"queued","position":1,"ahead":0,
+#     "queueLength":3,"poll":"GET /result?taskId=<uuid>","stream":"GET /stream?taskId=<uuid>",
+#     "queue":"GET /queue"}
 
 # 2a) 轮询终态（最简单）：pending 反复查，done/error 取 result
 curl 127.0.0.1:8765/result?taskId=<uuid>
-# pending: {"ok":true,"state":"pending","queuedMs":1234}
+# queued:  {"ok":true,"state":"pending","phase":"queued","position":2,"ahead":1,
+#            "queueLength":3,"active":{...},"queuedMs":1234,"progress":null}
+# running: {"ok":true,"state":"pending","phase":"running","runningMs":42000,
+#            "progress":{"step":"streaming","answers":2,"partialChars":1234}}
 # done:    {"ok":true,"state":"done","result":{ok,answer,steps,traceId,...}}
 # error:   {"ok":false,"state":"error","result":{...}}
 
 # 2b) 流式（SSE）：连上就收到当前态，结束后自动关闭
 curl -N 127.0.0.1:8765/stream?taskId=<uuid>
 # event: status / event: done，done 带完整 result
+
+# 2c) 队列总览：谁在跑、后面排了谁
+curl 127.0.0.1:8765/queue
+# {"active":{taskId,peerName,elapsedMs,qPreview,progress},"waiting":[{position,...}],"count":3}
 ```
 
 - **默认 `mode:"async"`**（返回 202 + taskId）。要回退到老的"阻塞到终稿"行为，显式传 `{"mode":"sync"}`。
 - 结果在服务端保留 **1 小时**（`taskId` 可多次取，幂等），所以子 Agent 即使被自己的超时打断、过了几分钟再来查也能拿到。
 - 提交时还可带 **`notifyFile`**（把结果 JSON 写到指定文件）或 **`callback`**（POST 结果；默认只允许 localhost，远端需 `COACH_ALLOW_REMOTE_CB=1`）。子 Agent 可以先走人，服务端完成后主动落盘/回调。
-- 等待器：`node scripts/await_task.js <taskId> --out result.json`（detached 等待终态，答案打印到 stdout，退出码 0/1），不占调用方的连接。
-- `ask.js` CLI 仍是同步语义（内部用 sync 行为，方便人工直接看答案）；机器对机器、尤其是子 Agent，请用上面异步接口。
-- ⚠️ 服务端仍是**串行**一问一答（`chain`）。多子 Agent 并发提交会排队，`/result` 的 `queuedMs` 能看出在排多久。
+- 等待器：`node scripts/await_task.js <taskId> --out result.json`（detached 等待终态，答案打印到 stdout，退出码 0/1；stderr 会打印 `queued #N / running / step`），不占调用方的连接。
+- `ask.js` CLI 仍是同步语义（内部用 sync 行为，方便人工直接看答案；若服务端只回 taskId，会轮询并打印排队位置/阶段）；机器对机器、尤其是子 Agent，请用上面异步接口。
+- ⚠️ 服务端**串行**一问一答（单个 webview，必须如此）：并发提交按 **FIFO** 排队，**不会并行**。排队信息：`/result`、`/stream` 的 `phase`（`queued`/`running`）、`position`（含正在跑的那个，所以下一顺位是 #2）、`ahead`、`queueLength`、`active`、`progress.step`；**`queuedMs` 是提交至今的总时长（含已运行时间），`runningMs` 才是真正开始后的耗时**。`timeoutMs` 从**出队开始**计时，排队等待不消耗它。`node scripts/queue.js` 一眼看全局。
 
 - **peer 路由**：`/health` 返回 `defaultCoach {id,title}`、`coaches`（可见智能体数）和 `discoverError`；`/discover` 返回当前可见的 `{id,title}` 列表；`/history?peer=` 按教练读各自历史；`/ask` 的 `peer` 支持别名（`impl`/`implementation`/`coach`/`delivery`/`empower`）、标题片段或裸 `ipa_<uuid>`，**缺省是 impl**。所有 token 都先经实时发现解析成这台机器上的真实 id。
 - ⚠️ **必须核对当前会话**（`ask_both.js` 切换时已自动处理）：两个教练共用同一个 `single-agent` webview，`ask` 前会读主页面 hash（`#/main/im/<peer>/…`）核对，不符就自动点击切换。否则会把问题发进另一个教练的会话。
 - 🚨 **会话校验要双条件**（实测修过的真 bug）：`coach_ask_server.js` 的 `ensureConversation` 曾经**只查主页面 hash**，但两个教练共用一个 `single-agent` webview，切换后 hash 不一定同步更新 → **问题会被静默发进另一个教练的会话**（看不到报错，只是答案怪）。现已改为**双条件**：hash 匹配 **且** webview 标题 == 教练显示名；重试 16 次（i=0/6 各点一次），不符时报 misroute。标题比较前会去掉列表里的「智能体」标签（干净名字在 `.mid-info[title]`）；点会话行兼容 `li.agent-item`（智能体目录）和 `li.all-item`（全部会话）两种 DOM。修改后回归测过 impl/delivery 两个会话（2026-10-17 又用新发现逻辑复测通过）。
 - 原理：置前窗口 → CDP 驱动 secretary webview 填框点发送 → 共享读复制消息库轮询终稿（基线用消息 **ts+id，绝不能用 rowid**——最新消息 rowid 反而更小，历史分页往上追加）。
 - **中文千万别走 curl 命令行 -d 参数**：本机 curl 会把 argv 按 ANSI(GBK) 编码发出（实测 `你好`→`c4e3bac3`），教练收到乱码还会用 answerType=97 反问。用 `ask.js`（node argv 是干净 UTF-8）或 `curl --data-binary @file`。
-- 服务一次只跑一问（内部串行）；答案文本取 `extend.responses` 中**最后一条非空 response**（不是 `responses[0]`——外置大文本行会累积 ack→卡片→终稿多条）；普通答案在 `showData.text`，澄清/反问类在 `data.text`（answerType=97），两者都要解析。
+- 服务一次只跑一问（**FIFO 队列**，`/queue` 可见位置/阶段）；答案文本取 `extend.responses` 中**最后一条非空 response**（不是 `responses[0]`——外置大文本行会累积 ack→卡片→终稿多条）；普通答案在 `showData.text`，澄清/反问类在 `data.text`（answerType=97），两者都要解析。
 
 ## 通道 A：只读本地消息库（不打断用户，读历史用它）
 
@@ -188,6 +196,7 @@ window['nc-lightapp-front'].ajax({
 ## 坑位
 
 - **左侧列表有两套 DOM**：「智能体」tab = `li.agent-item`（完整目录，本机 882 个，**含从没聊过的**）；「全部」tab = `li.all-item`（只有已有会话）。只查一种会读到 0 行，症状就是 `no ipa_ agents found in the live YonZone list`。`coach-discover.js` 现在两处都读，并会在需要时切到「智能体」tab。
+- **同步等答案的人看不到排队**：`mode:"sync"` 的 HTTP 连接会在队列里一直挂着，没有位置反馈；要看排队/阶段就用 async + `/result`/`/stream`，或 `node scripts/queue.js`。回调 `callback` 卡住最多拖 10s（已加超时），但别在回调里做长活——它结束前队列不会开始下一问。
 - **长文本答案别只读 `content`**（见通道 A 的 `isLargeText` 条）：`isLargeText=1` 的大文本行正文在 `largeTextContent`，`content` 只剩 `completeContent.url`；只读 content 会空文本→误报“未捕获终稿”。
 - **列表标题带「智能体」标签**：`.title` 的文本是 `交付赋能总教练 智能体`，而 webview 标题是 `交付赋能总教练`。名字取 `.mid-info[title]`，比较前统一去掉后缀。
 - **「智能体」tab 的 id 是 `-10_menu`**：以 `-`+数字开头，`#-10_menu` 不是合法 CSS 选择器（`querySelector` 直接抛 DOMException）→ 用 `[id="-10_menu"]` 或 `getElementById('-10_menu')`。
@@ -209,7 +218,8 @@ window['nc-lightapp-front'].ajax({
 - `scripts/coach_headless.js` — 无头客户端（通道 D，协议直连，仅内置模块）
 - `scripts/ws_client.js` — 裸 RFC6455 WebSocket 客户端（支持自定义握手头/子协议）
 - `scripts/bg.js` — **后台无窗口启动器**（detached + windowsHide + 日志落 logs/；`--list`/`--tail`/`--kill`）
-- `scripts/coach_ask_server.js` — 本地 ask API（通道 C；异步 taskId + `/result`/`/stream`，按实时发现的教练路由）
+- `scripts/coach_ask_server.js` — 本地 ask API（通道 C；异步 taskId + `/result`/`/stream`/`/queue`，按实时发现的教练路由，FIFO 排队带位置/阶段）
+- `scripts/queue.js` — 打印当前队列：谁在跑、后面排了谁（`--json`）
 - `scripts/ask.js` — CLI 客户端（中文安全，`--peer impl|delivery|标题片段|ipa_ id`）
 - `scripts/ask_both.js` — **一次问两个教练**（按别名，不写死 id），产出合并 markdown（`--out`/`--tag`）
 - `scripts/list_peers.js` — 枚举消息库里所有 `ipa_` 机器人会话 peer

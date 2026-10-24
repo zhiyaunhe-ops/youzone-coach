@@ -36,10 +36,17 @@ function get(path) {
 }
 
 (async () => {
+  let lastTag = '', lastStep = '';
   while (Date.now() < deadline) {
     let r;
     try { r = await get(`/result?taskId=${encodeURIComponent(taskId)}`); }
     catch { await new Promise(s => setTimeout(s, 3000)); continue; }
+    const tag = r.phase === 'queued'
+      ? `queued #${r.position || '?'} (ahead ${r.ahead != null ? r.ahead : '?'}, queue ${r.queueLength != null ? r.queueLength : '?'})`
+      : `${r.phase || r.state}${r.runningMs ? ' ' + Math.round(r.runningMs / 1000) + 's' : ''}`;
+    if (tag !== lastTag) { console.error(`[task] ${tag}`); lastTag = tag; }
+    const step = r.progress && r.progress.step;
+    if (step && step !== lastStep) { console.error(`[task] step: ${step}`); lastStep = step; }
     if (r.state === 'done' || r.state === 'error') {
       if (out) fs.writeFileSync(out, JSON.stringify(r, null, 2));
       const res = r.result || {};

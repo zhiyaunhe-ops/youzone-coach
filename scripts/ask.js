@@ -65,10 +65,18 @@ async function main() {
     const taskId = r.taskId;
     const deadline = Date.now() + timeout + 120000;
     process.stderr.write(`[task ${taskId}] waiting...\n`);
+    let lastTag = '', lastStep = '';
     for (;;) {
       if (Date.now() > deadline) throw new Error('timed out waiting for task ' + taskId);
       await sleep(2000);
       const s = await request('GET', '/result?taskId=' + encodeURIComponent(taskId));
+      // Surface queue position / phase changes, not every 2s poll.
+      const tag = s.phase === 'queued'
+        ? `queued #${s.position || '?'} (ahead ${s.ahead != null ? s.ahead : '?'}, queue ${s.queueLength != null ? s.queueLength : '?'})`
+        : `${s.phase || s.state}${s.runningMs ? ' ' + Math.round(s.runningMs / 1000) + 's' : ''}`;
+      if (tag !== lastTag) { process.stderr.write(`[task ${taskId}] ${tag}\n`); lastTag = tag; }
+      const step = s.progress && s.progress.step;
+      if (step && step !== lastStep) { process.stderr.write(`[task ${taskId}] step: ${step}\n`); lastStep = step; }
       if (s.state === 'done') { r = s.result || { ok: false, error: 'done without result' }; break; }
       if (s.state === 'error') { r = s.result || { ok: false, error: s.error || 'task error' }; break; }
       if (s.error && !s.state) { r = { ok: false, error: s.error }; break; }

@@ -2,6 +2,7 @@
 // Local HTTP service that turns the YonZone coaches into an API:
 //   POST /ask    {q, peer?, timeoutMs?, mode?}  -> ask one coach (async by default)
 //   GET  /result?taskId= | /stream?taskId=       -> fetch a pending/终稿 result
+//   GET  /queue                  -> who owns the coach now + FIFO with positions
 //   GET  /history?n=20&peer=impl|delivery|<id>   -> recent Q/A pairs from the DB
 //   GET  /health                 -> cdp/webview/discovered coaches/db status
 //   GET  /discover               -> live-discovered ipa_ agents {id,title}
@@ -129,8 +130,14 @@ function parseRow(row) { return parseMessage(row.ct, row.raw); }
 // good answer as "send failed". Compare on collapsed whitespace instead.
 function normalize(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); }
 
-// Serialize asks: one question in flight at a time.
+// ---- ask queue -------------------------------------------------------------
+// The coach is a single UI (one webview, one conversation at a time), so asks
+// MUST run one after another. `chain` is the execution order; `waiting` tracks
+// the same FIFO at task level so /result, /stream and /queue can answer "where
+// am I?" while a long answer is being generated.
 let chain = Promise.resolve();
+const waiting = [];        // tasks accepted but not started (FIFO)
+let activeTask = null;     // task currently owning the webview
 
 // ---- async task store ------------------------------------------------------
 // /ask in its original form was SYNCHRONOUS: the HTTP connection stayed open
@@ -141,11 +148,13 @@ let chain = Promise.resolve();
 // caller can re-fetch it (GET /result or GET /stream) even after its own
 // timeout/retry — the long-running work is no longer tied to one connection.
 const TASK_TTL_MS = 1 * 60 * 60 * 1000; // results kept for 1h
-const tasks = new Map(); // id -> { state, q, peer, ts, startedAt, finishedAt, result }
+const tasks = new Map(); // id -> { state, phase, q, peer, ts, startedAt, finishedAt, result }
 
 function newTask(q, peer, opts = {}) {
   const id = randomUUID();
-  const t = { id, state: 'pending', q, peer, ts: now(), startedAt: null, finishedAt: null, result: null,
+  const t = { id, state: 'pending', phase: 'queued', q, peer, peerName: opts.peerName || null,
+    ts: now(), queuedAt: now(), startedAt: null, finishedAt: null, result: null,
+    progress: null,                          // latest heartbeat from ask() (step/counters)
     // feedback channels: how the sub-agent wants to be told when it's done.
     callback: opts.callback || null,          // URL the server POSTs the result to on completion
     notifyFile: opts.notifyFile || null,      // file path the server writes the result JSON to
@@ -154,6 +163,33 @@ function newTask(q, peer, opts = {}) {
   // lazy sweep of expired tasks
   if (tasks.size > 64) for (const [k, v] of tasks) if (now() - v.ts > TASK_TTL_MS) tasks.delete(k);
   return t;
+}
+
+// "Where am I?" snapshot for one task. A running task has position 0; a queued
+// task reports its 1-based place in the FIFO and who is currently being asked.
+function queueInfo(task) {
+  const idx = waiting.indexOf(task);
+  const active = activeTask && activeTask !== task ? activeTask : null;
+  // Count the task that currently owns the coach: with one ask running, the
+  // first waiting task is #2 in line (one person ahead), not #1.
+  const offset = active ? 1 : 0;
+  return {
+    phase: task.phase || (task.state === 'pending' ? 'queued' : task.state),
+    position: idx >= 0 ? idx + 1 + offset : 0,
+    ahead: idx >= 0 ? idx + offset : 0,
+    queueLength: waiting.length + (activeTask ? 1 : 0),
+    active: active ? {
+      taskId: active.id, peer: active.peer, peerName: active.peerName,
+      phase: active.phase, startedAt: active.startedAt,
+      elapsedMs: active.startedAt ? now() - active.startedAt : null,
+      qPreview: String(active.q || '').slice(0, 60),
+    } : null,
+  };
+}
+
+// Heartbeats are advisory: a callback bug must never kill an ask.
+function setProgress(task, p) {
+  try { task.progress = { ...p, updatedAt: now() }; } catch {}
 }
 
 // Only allow http/https callbacks; block the cloud metadata endpoint (SSRF).
@@ -180,6 +216,8 @@ async function notifyTask(t) {
       try {
         const r = await fetch(String(url), {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
+          // A wedged callback endpoint must not hold the ask queue open.
+          signal: AbortSignal.timeout(10000),
           body: JSON.stringify({ taskId: t.id, state: t.state, q: t.q, result: t.result }),
         });
         t.callbackStatus = r.ok ? 'sent' : ('http_' + r.status);
@@ -196,7 +234,8 @@ async function notifyTask(t) {
   return t;
 }
 
-async function ask(q, timeoutMs = DEFAULT_TIMEOUT, coachArg = PEER) {
+async function ask(q, timeoutMs = DEFAULT_TIMEOUT, coachArg = PEER, onProgress = null) {
+  const report = (p) => { if (onProgress) { try { onProgress(p); } catch {} } };
   // Accept a coach already resolved by the caller (the HTTP layer resolves once
   // per request) or a token to resolve LIVE from the running YonZone. Never a
   // hardcoded id: {id,title} comes from the client's own agent catalog.
@@ -210,10 +249,13 @@ async function ask(q, timeoutMs = DEFAULT_TIMEOUT, coachArg = PEER) {
   const peerTitle = coach.title;    // display name used to verify the webview
   const t0 = now();
   await zc.foreground();
+  report({ step: 'foreground' });
 
   // 1) make sure the RIGHT conversation is open: both coaches render in the same
   //    'single-agent' webview, so trusting the existing webview sends to the wrong one.
+  report({ step: 'opening-conversation', peerName: peerTitle });
   await ensureConversation(peer, peerTitle);
+  report({ step: 'conversation-ready' });
 
   let webviewCdp;
   for (let i = 0; i < 10 && !webviewCdp; i++) {
@@ -227,6 +269,7 @@ async function ask(q, timeoutMs = DEFAULT_TIMEOUT, coachArg = PEER) {
 
     // 3) send
     await zc.sendQuestion(webviewCdp, q);
+    report({ step: 'sent' });
 
     // 4) locate our question row to anchor the wait on its ts
     const qNorm = normalize(q);
@@ -266,6 +309,7 @@ async function ask(q, timeoutMs = DEFAULT_TIMEOUT, coachArg = PEER) {
         ? 'question was misrouted to another coach (' + misroutedTo + ') (webview had not switched yet)'
         : 'sent question not found in DB (send likely failed)');
     }
+    report({ step: 'question-found', anchor, qTs: qts });
 
     // 5) poll for bot answers newer than the question
     const answers = new Map(); // id -> parsed answer (re-parsed each copy: rows update in place)
@@ -283,6 +327,11 @@ async function ask(q, timeoutMs = DEFAULT_TIMEOUT, coachArg = PEER) {
         }
       });
       if (changed) lastChange = now();
+      // Heartbeat for /result + /stream: step + counters, never the partial text
+      // itself (an ack row is not an answer and must not leak as one).
+      const partialChars = [...answers.values()].reduce((n, a) => Math.max(n, (a.text || '').length), 0);
+      report({ step: answers.size ? 'streaming' : 'waiting-answer', answers: answers.size,
+        partialChars, lastChangeAgeMs: now() - lastChange, elapsedMs: now() - t0 });
       const finals = [...answers.values()].filter(a => a.final);
       if (finals.length && now() - lastChange > QUIET_MS) break;
     }
@@ -294,6 +343,7 @@ async function ask(q, timeoutMs = DEFAULT_TIMEOUT, coachArg = PEER) {
         partial: [...answers.values()].map(p => p.text) };
     }
     const last = finals[finals.length - 1];
+    report({ step: 'finalizing' });
     return { ok: true, q, peer, peerName: peerTitle, answer: last.text,
       traceId: last.traceId, questionId: last.questionId, steps: last.steps,
       qTs: qts, answerTs: last.ts || null, anchor,
@@ -369,6 +419,7 @@ const server = http.createServer(async (req, res) => {
       // feedback: how the caller wants to be TOLD when generation finishes
       // (the sub-agent may have already given up on its own 2-min connection).
       const task = newTask(q, peer, {
+        peerName: peerTitle,
         callback: body.callback || null,          // URL to POST the result to on completion
         notifyFile: body.notifyFile || null,      // file to write the result JSON to
       });
@@ -378,48 +429,74 @@ const server = http.createServer(async (req, res) => {
       // async paths notify identically.
       const finish = async (r) => {
         task.state = r.ok ? 'done' : 'error';
+        task.phase = task.state;
         task.result = { ...r, peer, peerName: peerTitle };
         task.finishedAt = now();
         await notifyTask(task);
         if (!res.writableEnded) send(r.ok ? 200 : (mode === 'sync' ? 504 : 200), { ...r, peer, peerName: peerTitle });
       };
 
-      if (mode === 'sync') {
-        chain = chain.then(() => ask(q, Number(body.timeoutMs) || DEFAULT_TIMEOUT, coach))
-          .then(finish)
-          .catch(async e => {
-            task.state = 'error'; task.result = { ok: false, error: String(e.message || e) };
-            task.finishedAt = now(); await notifyTask(task);
-            if (!res.writableEnded) send(500, { ok: false, error: String(e.message || e) });
-          });
-        return;
-      }
+      // One queued job per ask; `chain` guarantees it runs after every ask that
+      // was accepted earlier. /result and /stream show this task's FIFO position
+      // until it starts, then heartbeats while the coach is generating.
+      const run = async () => {
+        const i = waiting.indexOf(task);
+        if (i >= 0) waiting.splice(i, 1);
+        task.phase = 'running';
+        task.startedAt = now();
+        activeTask = task;
+        try {
+          const r = await ask(q, Number(body.timeoutMs) || DEFAULT_TIMEOUT, coach,
+            p => setProgress(task, p));
+          await finish(r);
+        } catch (e) {
+          task.state = 'error'; task.phase = 'error';
+          task.result = { ok: false, error: String(e.message || e) };
+          task.finishedAt = now();
+          await notifyTask(task);
+          if (!res.writableEnded) send(500, { ok: false, error: String(e.message || e) });
+        } finally {
+          activeTask = null;
+          task.progress = null;   // terminal; a stale "streaming" would mislead
+        }
+      };
+      waiting.push(task);
+      // run() swallows ask failures itself; this catch is the last line of
+      // defence (a dead socket / notify bug) so one bad job cannot wedge the
+      // chain and leave every later task stuck in "queued" forever.
+      chain = chain.then(run).catch(e => console.error('queue job failed:', e && e.message));
 
-      // async: start work, return taskId at once. The sub-agent's own timeout
-      // cannot lose the result: it is pushed via callback/notifyFile AND kept
-      // for 1h under /result.
-      chain = chain.then(() => ask(q, Number(body.timeoutMs) || DEFAULT_TIMEOUT, coach))
-        .then(finish)
-        .catch(async e => {
-          task.state = 'error'; task.result = { ok: false, error: String(e.message || e) };
-          task.finishedAt = now(); await notifyTask(task);
-        });
-      // immediate ack — the result is fetched via GET /result or GET /stream,
-      // or pushed to the caller's callback/notifyFile as soon as it is ready.
+      // sync: the response is settled by finish()/catch above (the HTTP connection
+      // stays open while this task waits, so async is the mode with queue feedback).
+      if (mode === 'sync') return;
+
+      // async: ack now. The sub-agent's own timeout cannot lose the result: it is
+      // pushed via callback/notifyFile AND kept for 1h under /result.
+      const qi = queueInfo(task);
       send(202, { ok: true, async: true, taskId: task.id, state: 'pending',
+        phase: qi.phase, position: qi.position, ahead: qi.ahead,
+        queueLength: qi.queueLength, active: qi.active,
         peer, peerName: peerTitle,
         poll: `GET /result?taskId=${task.id}`,
         stream: `GET /stream?taskId=${task.id}`,
+        queue: `GET /queue`,
         callback: task.callback || undefined, notifyFile: task.notifyFile || undefined });
     });
   } else if (req.method === 'GET' && url.pathname === '/result') {
     const id = url.searchParams.get('taskId');
     const t = tasks.get(id);
     if (!t) return send(404, { ok: false, error: 'unknown taskId', taskId: id });
-    if (t.state === 'pending') return send(200, { ok: true, state: 'pending', taskId: id,
-      q: t.q, peer: t.peer, queuedMs: now() - t.ts,
-      callback: t.callback || undefined, callbackStatus: t.callbackStatus,
-      notifyFile: t.notifyFile || undefined, notifyFileStatus: t.notifyFileStatus });
+    if (t.state === 'pending') {
+      const qi = queueInfo(t);
+      return send(200, { ok: true, state: 'pending', phase: qi.phase, taskId: id,
+        position: qi.position, ahead: qi.ahead, queueLength: qi.queueLength, active: qi.active,
+        q: t.q, peer: t.peer, peerName: t.peerName,
+        queuedMs: now() - t.ts,
+        runningMs: t.startedAt ? now() - t.startedAt : 0,
+        progress: t.progress || null,
+        callback: t.callback || undefined, callbackStatus: t.callbackStatus,
+        notifyFile: t.notifyFile || undefined, notifyFileStatus: t.notifyFileStatus });
+    }
     if (t.state === 'error') return send(200, { ok: false, state: 'error', taskId: id, result: t.result,
       callbackStatus: t.callbackStatus, notifyFileStatus: t.notifyFileStatus });
     // done
@@ -434,13 +511,20 @@ const server = http.createServer(async (req, res) => {
     const ping = setInterval(() => { if (!res.writableEnded) res.write(': keep-alive\n\n'); }, 15000);
     const emit = () => {
       if (res.writableEnded) return;
-      if (t.state === 'pending') res.write(`event: status\ndata: ${JSON.stringify({ state: 'pending', queuedMs: now() - t.ts })}\n\n`);
-      else res.write(`event: done\ndata: ${JSON.stringify(t.result || { ok: false, error: 'unknown error' })}\n\n`);
+      if (t.state === 'pending') {
+        const qi = queueInfo(t);
+        res.write(`event: status\ndata: ${JSON.stringify({
+          state: 'pending', phase: qi.phase, taskId: t.id,
+          position: qi.position, ahead: qi.ahead, queueLength: qi.queueLength, active: qi.active,
+          queuedMs: now() - t.ts, runningMs: t.startedAt ? now() - t.startedAt : 0,
+          progress: t.progress || null,
+        })}\n\n`);
+      } else res.write(`event: done\ndata: ${JSON.stringify(t.result || { ok: false, error: 'unknown error' })}\n\n`);
     };
     emit();
     let iv = null, onDone = null;
     if (t.state === 'pending') {
-      iv = setInterval(() => { if (!res.writableEnded) emit(); }, 2000);
+      iv = setInterval(() => { if (!res.writableEnded) emit(); }, 1000);
       onDone = setInterval(() => {
         if (t.state !== 'pending') { clearInterval(iv); clearInterval(onDone); emit();
           if (!res.writableEnded) res.end(); }
@@ -448,19 +532,36 @@ const server = http.createServer(async (req, res) => {
     } else { if (!res.writableEnded) res.end(); }
     // Clear every timer on client disconnect (otherwise polling contexts leak).
     req.on('close', () => { clearInterval(ping); if (iv) clearInterval(iv); if (onDone) clearInterval(onDone); });
+  } else if (req.method === 'GET' && url.pathname === '/queue') {
+    // Whole-coach view: who owns the webview now + the FIFO behind them.
+    const active = activeTask ? {
+      taskId: activeTask.id, qPreview: String(activeTask.q || '').slice(0, 80),
+      peer: activeTask.peer, peerName: activeTask.peerName,
+      phase: activeTask.phase, startedAt: activeTask.startedAt,
+      elapsedMs: activeTask.startedAt ? now() - activeTask.startedAt : 0,
+      progress: activeTask.progress || null,
+    } : null;
+    const offset = activeTask ? 1 : 0;
+    send(200, { ok: true, active, waiting: waiting.map((t, i) => ({
+      taskId: t.id, position: i + 1 + offset, qPreview: String(t.q || '').slice(0, 80),
+      peer: t.peer, peerName: t.peerName, phase: t.phase, queuedMs: now() - t.ts,
+    })), count: waiting.length + offset });
   } else if (req.method === 'GET' && url.pathname === '/history') {
     let coach;
     try { coach = await cd.resolveCoach(url.searchParams.get('peer') || url.searchParams.get('coach') || PEER); }
     catch (e) { return send(400, { ok: false, error: 'coach resolution failed: ' + e.message }); }
     send(200, history(Number(url.searchParams.get('n')) || 20, coach.id));
   } else if (req.method === 'GET' && url.pathname === '/health') {
-    health().then(h => send(200, h)).catch(e => send(500, { error: String(e) }));
+    health().then(h => send(200, { ...h, queue: {
+      active: activeTask ? { taskId: activeTask.id, peerName: activeTask.peerName,
+        elapsedMs: activeTask.startedAt ? now() - activeTask.startedAt : 0 } : null,
+      waiting: waiting.length } })).catch(e => send(500, { error: String(e) }));
   } else if (req.method === 'GET' && url.pathname === '/discover') {
     cd.coachList().then(c => send(200, c)).catch(e => send(500, { error: String(e) }));
   } else if (req.method === 'GET' && url.pathname === '/targets') {
     zc.listTargets().then(t => send(200, t.map(x => ({ type: x.type, title: x.title, url: x.url }))))
       .catch(e => send(500, { error: String(e) }));
-  } else send(404, { error: 'use POST /ask {q}, GET /history?n=, GET /health, GET /discover, GET /targets' });
+  } else send(404, { error: 'use POST /ask {q}, GET /result?taskId=, GET /stream?taskId=, GET /queue, GET /history?n=, GET /health, GET /discover, GET /targets' });
 });
 
 server.listen(PORT, '127.0.0.1', () => {
@@ -469,6 +570,8 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log(`  default token: "${PEER}" (alias / title substring / ipa_ id)`);
   console.log(`  per-request: POST /ask {"q":"...","peer":"impl"|"delivery"|<substring>|<ipa_ id>}`);
   console.log(`  async by default -> returns taskId; fetch with GET /result?taskId= | GET /stream?taskId=`);
-  console.log(`  legacy sync: POST /ask {"q":"...","mode":"sync"} (blocks until answer)`);
+  console.log(`  queue: one ask at a time (single webview); GET /queue shows active + FIFO positions`);
+  console.log(`  queue feedback: /result & /stream carry {phase: queued|running, position, ahead, active}`);
+  console.log(`  legacy sync: POST /ask {"q":"...","mode":"sync"} (blocks until answer; no queue feedback)`);
   console.log(`  GET /discover -> live-discovered {id,title} agents; GET /health for resolution status`);
 });

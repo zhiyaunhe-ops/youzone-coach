@@ -25,6 +25,7 @@
 
 ```bash
 npm test                                   # 离线自检，不联网、不碰数据库
+npm run test:queue                         # 队列集成测试（stub 服务，验证 FIFO/位置/SSE）
 
 # 首次/换账号：确认这台机器解析到哪两个教练（--all / --json / --resolve delivery）
 node scripts/discover_coaches.js
@@ -63,7 +64,7 @@ node scripts/identify_peers.js ipa_xxx     # 看它最近答了什么，判定�
 | --- | --- | --- | --- |
 | A 只读消息库 | `dump_chat.js` | 无（共享读复制 + GBK 解码） | 读历史问答、不打断用户 |
 | B CDP 驱动 | `youzone_cdp.js` | YonZone 开 CDP `127.0.0.1:8089` | 探页面、填框发送、DOM 取证 |
-| C 本地 ask API | `coach_ask_server.js` | B | 把教练变成 `POST /ask`（默认异步 taskId，`/result`/`/stream` 取终稿；`mode:"sync"` 兼容旧行为） |
+| C 本地 ask API | `coach_ask_server.js` | B | 把教练变成 `POST /ask`（默认异步 taskId，`/result`/`/stream` 取终稿并带排队位置/阶段；`/queue` 看全局；`mode:"sync"` 兼容旧行为） |
 | D 无头直连 | `coach_headless.js` | 有效 token | **默认禁用**（需 `--kick-ok`）：会上第二个 IM 会话，把桌面端顶到登录页 |
 | 发现教练 | `discover_coaches.js` + `coach-discover.js` | B（客户端在跑） | 从「智能体」目录实时解析 impl/delivery，不写死 id、不要求聊过 |
 | 后台启动 | `bg.js` | — | detached + `windowsHide` 跑任何脚本、零窗口；日志落 `logs/`（`--list`/`--tail`/`--kill`） |
@@ -133,7 +134,7 @@ node scripts/discover_coaches.js --resolve "某个标题片段"
 - **发现依赖运行中的客户端**：`discover_coaches.js` / 通道 C 需要 YonZone 已登录且 CDP 已开；租户没授权这两个教练时列表里就没有它们，会明确报 `no coach matching ...`。
 - 无头发出的提问**不落本地消息库**（客户端只显示回答），服务端历史是完整的。
 - 客户端掉到扫码登录页时 CDP 里没有 cookie、库里的 token 也已过期，必须先扫码登录（`preflight.js` 会明确指出）。
-- ask 服务是**串行**的：多个调用方/子 Agent 并发提交会排队（`/result` 的 `queuedMs` 能看出排了多久）。
+- ask 服务是**串行**的（单个 webview，必须如此）：多个调用方/子 Agent 并发提交按 FIFO 排队。排队信息：`/result`、`/stream` 的 `phase`（queued/running）、`position`、`ahead`、`queueLength`、`active`、`progress.step`；`/queue` 看全局，`node scripts/queue.js` 直接打印。`queuedMs` 含运行时间，`runningMs` 才是真正生成耗时；`timeoutMs` 从出队开始计时。
 - 教练同一问题多轮答案可能不一致，取到的节点/字段/公式必须回环境复核。
 - 未实现 `permessage-deflate`：若服务端协商该扩展，客户端会**明确报错**而不是静默卡死。
 

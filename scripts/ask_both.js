@@ -36,7 +36,10 @@ const LABELS = {
 };
 
 function post(peer) {
-  const body = JSON.stringify({ q, timeoutMs: timeout, peer, mode: 'sync' });
+  // Async by default: an ack (taskId) comes back immediately, so this client can
+  // print queue positions/steps while the coach generates. A sync request would
+  // sit on one connection with zero feedback (and could be cut by proxies).
+  const body = JSON.stringify({ q, timeoutMs: timeout, peer, mode: 'async' });
   return new Promise((resolve) => {
     const req = http.request({ host: '127.0.0.1', port, path: '/ask', method: 'POST',
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(body) } },
@@ -47,11 +50,47 @@ function post(peer) {
           catch { resolve({ ok: false, error: 'bad JSON: ' + b.slice(0, 300) }); }
         });
       });
-    req.setTimeout(timeout + 30000, () =>
-      req.destroy(new Error('client timeout after ' + (timeout + 30000) + 'ms')));
+    req.setTimeout(30000, () => req.destroy(new Error('ack timeout after 30000ms')));
     req.on('error', e => resolve({ ok: false, error: e.message }));
     req.end(body);
   });
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+function get(path) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path, method: 'GET' }, res => {
+      let b = ''; res.setEncoding('utf8');
+      res.on('data', c => (b += c));
+      res.on('end', () => { try { resolve(JSON.parse(b || '{}')); } catch { resolve({ ok: false, error: 'bad JSON' }); } });
+    });
+    req.on('error', reject);
+    req.setTimeout(15000, () => req.destroy(new Error('get timeout')));
+    req.end();
+  });
+}
+
+// Poll /result until terminal, echoing queue position / phase changes to stderr.
+async function waitTask(taskId, budgetMs) {
+  const deadline = Date.now() + budgetMs + 120000;
+  let lastTag = '', lastStep = '';
+  for (;;) {
+    if (Date.now() > deadline) return { ok: false, error: 'timed out waiting for task ' + taskId };
+    await sleep(2000);
+    let s;
+    try { s = await get('/result?taskId=' + encodeURIComponent(taskId)); }
+    catch { continue; }
+    const tag = s.phase === 'queued'
+      ? `queued #${s.position || '?'} (ahead ${s.ahead != null ? s.ahead : '?'}, queue ${s.queueLength != null ? s.queueLength : '?'})`
+      : `${s.phase || s.state}${s.runningMs ? ' ' + Math.round(s.runningMs / 1000) + 's' : ''}`;
+    if (tag !== lastTag) { process.stderr.write(`    ${tag}\n`); lastTag = tag; }
+    const step = s.progress && s.progress.step;
+    if (step && step !== lastStep) { process.stderr.write(`    step: ${step}\n`); lastStep = step; }
+    if (s.state === 'done') return s.result || { ok: false, error: 'done without result' };
+    if (s.state === 'error') return s.result || { ok: false, error: s.error || 'task error' };
+    if (s.error && !s.state) return { ok: false, error: s.error };
+  }
 }
 
 const HKT = new Intl.DateTimeFormat('sv-SE', {
@@ -74,9 +113,13 @@ async function main() {
   for (const peer of PEER_ORDER) {
     const label = LABELS[peer];
     process.stderr.write(`\n>>> asking ${label} (${peer}) ...\n`);
-    const r = await post(peer);
+    const ack = await post(peer);
+    // 0.4.3 answers with a taskId; keep a plain result path for older servers.
+    const r = (ack && ack.ok && ack.async && ack.taskId)
+      ? await waitTask(ack.taskId, timeout)
+      : ack;
     // The server reports which live coach the alias resolved to on THIS login.
-    const name = r.peerName || label;
+    const name = r.peerName || ack.peerName || label;
     r._peer = peer; r._peerName = name; r._peerId = r.peer || null;
     results.push(r);
     process.stderr.write(r.ok
@@ -93,7 +136,7 @@ async function main() {
   const md = [
     `# 教练问答记录${tag ? ' · ' + tag : ''}`,
     '',
-    '- 提问方式：串行（问完一个教练、等终稿落库后再切下一个会话）',
+    '- 提问方式：串行（一次只问一个教练；服务端 FIFO 队列，异步取结果，带排队位置/阶段反馈）',
     `- 提问对象：${PEER_ORDER.map(p => LABELS[p]).join(' / ')}`,
     ...results.map(r => `- ${r._peerName}${r._peerId ? '（`' + r._peerId + '`）' : ''}：提问 ${hkt(r.qTs) || '（未落库）'} → 回答 ${hkt(r.answerTs) || '（本轮未取到）'}`),
     '',
