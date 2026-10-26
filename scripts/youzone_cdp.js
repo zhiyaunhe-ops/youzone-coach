@@ -179,14 +179,53 @@ async function openConversation(cdpMain, peerId) {
     ' (open the 智能体 tab in YonZone, or run node scripts/discover_coaches.js)');
 }
 
+// Best-effort raise through CDP only (no external binary). Used when fg.ps1 is
+// unavailable and as a second chance when the pwsh raise did not happen.
+async function bringToFront() {
+  const pages = (await listTargets()).filter(t => t.webSocketDebuggerUrl && t.type === 'page');
+  if (!pages.length) throw new Error('no page target');
+  const main = pages.find(t => /main\/index\.html|renderer\/index\.html/.test(t.url || '')) || pages[0];
+  const cdp = new CDP(main.webSocketDebuggerUrl);
+  try {
+    await cdp.connect();
+    await cdp.send('Page.bringToFront');
+    await cdp.eval('window.focus(); 1');
+    return true;
+  } finally { cdp.close(); }
+}
+
 // Bring YonZone to the foreground (renderer throttling breaks evals otherwise).
+// Primary path is fg.ps1 via pwsh. Some hosts (sandboxed shells, PATH trimmed to
+// node/python/git) cannot resolve pwsh, so fall back to CDP Page.bringToFront.
+// Neither path is fatal: a background window only risks throttling, and the
+// caller's evals still work, so this warns instead of aborting the whole ask.
+// Set YZ_FG_STRICT=1 to restore the old hard-failure behaviour.
 function foreground() {
   const script = path.join(__dirname, 'fg.ps1');
-  return new Promise((resolve, reject) => {
-    spawn('pwsh', ['-NoProfile', '-File', script], { windowsHide: true })
-      .on('exit', c => c === 0 ? resolve() : reject(new Error('fg.ps1 exit ' + c)))
-      .on('error', reject);
+  const warn = msg => console.error('[fg] ' + msg);
+  const attemptPwsh = () => new Promise(resolve => {
+    let settled = false;
+    const done = r => { if (!settled) { settled = true; resolve(r); } };
+    let child;
+    try {
+      child = spawn('pwsh', ['-NoProfile', '-File', script], { windowsHide: true });
+    } catch (e) { return done({ ok: false, reason: e.message }); }
+    child.on('exit', c => done(c === 0 ? { ok: true, via: 'fg.ps1' } : { ok: false, reason: 'fg.ps1 exit ' + c }));
+    child.on('error', e => done({ ok: false, reason: e.message }));
   });
+
+  return (async () => {
+    const first = await attemptPwsh();
+    if (first.ok) return { ok: true, via: first.via };
+    warn(first.reason + ' -> falling back to CDP Page.bringToFront');
+    let viaCdp = false;
+    try { viaCdp = await bringToFront(); } catch (e) { warn('CDP raise failed too: ' + e.message); }
+    const result = { ok: viaCdp, via: viaCdp ? 'cdp' : null, reason: first.reason };
+    if (!result.ok && process.env.YZ_FG_STRICT === '1') {
+      throw new Error('foreground failed: ' + first.reason);
+    }
+    return result;
+  })();
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));

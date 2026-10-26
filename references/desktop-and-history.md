@@ -115,6 +115,7 @@ window['nc-lightapp-front'].ajax({
 - pwsh profile 强制 UTF-8；-NoProfile 时要显式设置编码。fg.ps1 已处理。
 - policy 拦含 `Stop-Process`/`Start-Process` 字样的整条命令 → 用 `taskkill` / `cmd //c start` 替代。
 - **长任务不要前台跑**（会开着控制台窗口好几分钟 + 抢焦点）→ 用 `scripts/bg.js`（detached + `windowsHide`，stdio 落 `logs/`）。
+- **`spawn pwsh ENOENT`（2026-10-26 实测）**：`foreground()` 原先 `spawn('pwsh')` 跑 fg.ps1，宿主 PATH 里没有 `C:\Program Files\PowerShell\7` 时（例如 WorkBuddy 的 Bash 只把 node/python/git 放进 PATH）同步步骤直接抛错，`/health` 与 `/ask` 全在教练发现阶段中断。现在改为**回退 CDP `Page.bringToFront` + `window.focus()`**，两条都失败只告警不中断；`YZ_FG_STRICT=1` 可恢复原来的硬失败。排查时别在 bash 命令行里写 pwsh 字样（沙箱会整条拦截），用编辑器/Read 查。
 - 别用 `cmd /c start` 起后台任务：那是新开一个控制台窗口，就是"弹 cmd"的来源。
 - 半拉会话会一直顶着桌面端：收尾用 `node scripts/bg.js --kill <job>` 停掉，别让它自然超时。
 - PowerShell 传中文给 node 会乱码 → 中文内容写 UTF-8 无 BOM 文件再 evalfile/insfile。
