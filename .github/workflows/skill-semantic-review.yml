@@ -22,7 +22,7 @@ jobs:
   semantic-review:
     name: Advisory semantic review
     runs-on: [self-hosted, Windows, X64, skills-manager-semantic]
-    timeout-minutes: 15
+    timeout-minutes: 25
     continue-on-error: true
     steps:
       - uses: actions/checkout@v6
