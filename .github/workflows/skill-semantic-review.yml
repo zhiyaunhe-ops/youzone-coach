@@ -1,0 +1,46 @@
+name: Skill semantic review
+
+on:
+  push:
+    paths:
+      - '**/*.md'
+      - '.skill-policy.json'
+      - '.github/workflows/skill-semantic-review.yml'
+  pull_request:
+    paths:
+      - '**/*.md'
+      - '.skill-policy.json'
+      - '.github/workflows/skill-semantic-review.yml'
+  workflow_dispatch:
+    inputs:
+      base:
+        description: Optional base revision; defaults to the previous commit
+        required: false
+        type: string
+
+jobs:
+  semantic-review:
+    name: Advisory semantic review
+    runs-on: [self-hosted, Windows, X64, skills-manager-semantic]
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: Review the changed skill text with the shared local runner
+        shell: pwsh
+        run: |
+          $entry = Join-Path $env:USERPROFILE '.skills-manager/semantic-review/scripts/invoke-review.ps1'
+          & $entry -RepositoryPath $env:GITHUB_WORKSPACE -OutputDirectory (Join-Path $env:RUNNER_TEMP 'skill-semantic-review')
+      - name: Retain advisory findings and selected context
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: skill-semantic-review
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/skill-semantic-review/review.json
+            ${{ runner.temp }}/skill-semantic-review/review.md
+            ${{ runner.temp }}/skill-semantic-review/packet.json

@@ -47,3 +47,9 @@ The checker and its tests are mirrored across the four independent skill reposit
 - [Repository overview](../README.md)
 - [Machine policy](../.skill-policy.json)
 - [Workflow](../.github/workflows/skill-policy.yml)
+
+## Advisory semantic review
+
+The semantic CI workflow calls one local rule owner and runner at `%USERPROFILE%/.skills-manager/semantic-review` through the registered Windows workers. It reviews committed base/head changes and bounded related references, then publishes line-numbered findings as notices, a job summary and JSON/Markdown artifacts. No model score or finding blocks a merge; the existing static policy job remains separate.
+
+Rules, model settings and runtime are maintained centrally. The local Windows user session, workers and existing Codex login must be available. Reports distinguish reviewed, partial, skipped and unavailable results. See the [semantic workflow](../.github/workflows/skill-semantic-review.yml) for invocation; no Skill Creator installation is needed in a repository.
