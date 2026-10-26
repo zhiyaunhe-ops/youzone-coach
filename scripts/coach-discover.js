@@ -61,13 +61,52 @@ const LIST_JS = `(() => {
   };
 })()`;
 
-async function mainPage() {
-  const ts = await listTargets();
-  const p = ts.find(t => t.type === 'page' && (t.url || '').includes('/main/im'));
-  if (!p) throw new Error('main im page not found (is YonZone open?)');
-  const c = new CDP(p.webSocketDebuggerUrl);
-  await c.connect();
-  return c;
+// The message pane is one of the app-renderer targets, and its URL only reflects
+// the module currently shown: clicking 通讯录 / 工作台 rewrites it to something like
+// #/main/contacts/friendRecv, and the CDP url field additionally lags a navigation
+// by a beat. Trusting the url alone therefore reported "is YonZone open?" while the
+// pane was in fact healthy, so select by the LIVE hash and route back only if the
+// client really is sitting on another module.
+const IM_ROUTE = '#/main/im/0/0/0';
+const isImHash = h => /^#\/main\/im(\/|\?|$)/.test(String(h || ''));
+const isAppRenderer = t => /renderer\/index\.html/.test(t.url || '');
+
+async function mainPage({ navigateBack = true, waitMs = 6000 } = {}) {
+  const pages = (await listTargets())
+    .filter(t => t.type === 'page' && t.webSocketDebuggerUrl)
+    .sort((a, b) => Number((b.url || '').includes('/main/im')) - Number((a.url || '').includes('/main/im')));
+  if (!pages.length) throw new Error('main im page not found (is YonZone open?)');
+  // Only the app chrome is a candidate; auxiliary windows (预备窗口 / notification /
+  // browserview) exist too and are never the message pane.
+  const renderers = pages.filter(isAppRenderer);
+  const ordered = renderers.length ? renderers : pages;
+
+  let fallback = null;
+  for (const t of ordered) {
+    const c = new CDP(t.webSocketDebuggerUrl);
+    try {
+      await c.connect();
+      if (isImHash(await c.eval('location.hash'))) {
+        if (fallback) fallback.close();
+        return c;
+      }
+      if (fallback) c.close(); else fallback = c;
+    } catch { c.close(); }
+  }
+  if (!fallback) throw new Error('main im page not found (is YonZone open?)');
+  if (!navigateBack) return fallback;
+
+  // The client is on another module -> switch it back to messages once.
+  try {
+    await fallback.eval(`location.hash = ${JSON.stringify(IM_ROUTE)}; 1`);
+    const t0 = Date.now();
+    while (Date.now() - t0 < waitMs) {
+      await sleep(400);
+      if (isImHash(await fallback.eval('location.hash'))) return fallback;
+    }
+  } catch {}
+  // Hand it over anyway: readList repaints and has its own navigation fallback.
+  return fallback;
 }
 
 // Normalize a display name: collapse whitespace and drop the "智能体" label the
