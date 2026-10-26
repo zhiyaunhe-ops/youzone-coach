@@ -13,7 +13,7 @@
 **换机器/换账号不用改代码**：教练 id 由 `coach-discover.js` 从客户端左侧「智能体」目录实时解析（精确名优先）。
 目录列的是**所有已授权智能体**，点一行就能开新会话 —— 所以**从没和这两个教练说过话的新机器也能直接用**。
 
-> 面向 AI agent 的完整操作说明在 `SKILL.md`，协议细节在 `references/protocol-map.md`。
+> Start with [SKILL.md](SKILL.md). Read [desktop/history setup](references/desktop-and-history.md) only when needed, [the ask API](references/ask-api.md) for integrations, and [maintenance notes](references/maintenance-and-packaging.md) for changes or packaging. Protocol work uses the separate [headless reference](references/headless-protocol.md).
 
 ## 环境要求
 
@@ -22,6 +22,8 @@
   通道 C（ask API）需要 YonZone 在运行且 CDP 已打开。
 
 ## 快速开始
+
+Allow at least 420 seconds per coach, plus queue wait. Questions run serially in one shared webview; check the existing task and coach history before retrying after a timeout.
 
 ```bash
 npm test                                   # 离线自检，不联网、不碰数据库
@@ -32,14 +34,14 @@ node scripts/discover_coaches.js
 
 # 首选：一次问两个教练（按别名，不写死 id），产出合并markdown
 node scripts/bg.js coach_ask_server.js          # 通道 C 前置（后台起、无窗口；只需一次）
-node scripts/bg.js ask_both.js "你的问题" --timeout 240000 --out . --tag mytag
+node scripts/bg.js ask_both.js "你的问题" --timeout 420000 --out . --tag mytag
 node scripts/bg.js --tail ask_both              # 看进度（日志在 logs/）
 
 # 通道 D：无头提问（默认禁用：一 AUTH 就把桌面端顶到扫码登录页 -> 见 SKILL.md 硬规则 1）
 # 只有在“明确允许把用户踢下线”时才加 --kick-ok（或设 YZ_ALLOW_KICK=1）
-node scripts/coach_headless.js --kick-ok "用一句话说明库存调拨单和转库单的区别"
-node scripts/coach_headless.js "问题" --timeout 180000 --json     # 结构化输出给脚本用
-node scripts/coach_headless.js --kick-ok --file question.txt                # 中文从 UTF-8 文件读，避开命令行编码
+node scripts/coach_headless.js --kick-ok "用一句话说明库存调拨单和转库单的区别" --timeout 420000
+node scripts/coach_headless.js "问题" --timeout 420000 --json     # 结构化输出给脚本用
+node scripts/coach_headless.js --kick-ok --file question.txt --timeout 420000                # 中文从 UTF-8 文件读，避开命令行编码
 
 npm run preflight                          # 体检：库/CDP/凭据/WS 鉴权（只握手，不提问）
 
@@ -49,8 +51,8 @@ node scripts/dump_chat.js --peer delivery --out delivery.md
 
 # 通道 C：本地 ask API（需 YonZone + CDP）
 node scripts/bg.js coach_ask_server.js    # 后台起、无窗口
-node scripts/ask.js "你好，请用一句话介绍你自己"
-node scripts/ask.js "问题" --peer delivery
+node scripts/ask.js "你好，请用一句话介绍你自己" --timeout 420000
+node scripts/ask.js "问题" --peer delivery --timeout 420000
 
 # 不知道某个 ipa_ 是谁？
 node scripts/discover_coaches.js --all     # 实时目录：当前登录可见的全部 ipa_ 智能体（推荐）
