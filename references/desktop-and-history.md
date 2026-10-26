@@ -105,6 +105,7 @@ window['nc-lightapp-front'].ajax({
 ## 坑位
 
 - **左侧列表有两套 DOM**：「智能体」tab = `li.agent-item`（完整目录，本机 882 个，**含从没聊过的**）；「全部」tab = `li.all-item`（只有已有会话）。只查一种会读到 0 行，症状就是 `no ipa_ agents found in the live YonZone list`。`coach-discover.js` 现在两处都读，并会在需要时切到「智能体」tab。
+- **`main im page not found (is YonZone open?)` 不代表客户端关了**（2026-10-26 实测）：消息面板是单一 SPA target，`target.url` 跟着**当前模块**走——用户在客户端点了「通讯录」或「工作台」，url 就变成 `#/main/contacts/...`，而 CDP 的 url 字段还会滞后一次导航。旧 `mainPage()` 只认 url 含 `/main/im`，于是"用户随手点了别的窗口"就让所有问答报客户端不在线。现在按**页面自己的 `location.hash`** 选 target，必要时再导航回 `#/main/im/0/0/0`；备用窗口（预备窗口/notification/browserview）已排除。
 - **同步等答案的人看不到排队**：`mode:"sync"` 的 HTTP 连接会在队列里一直挂着，没有位置反馈；要看排队/阶段就用 async + `/result`/`/stream`，或 `node scripts/queue.js`。回调 `callback` 卡住最多拖 10s（已加超时），但别在回调里做长活——它结束前队列不会开始下一问。
 - **长文本答案别只读 `content`**（见通道 A 的 `isLargeText` 条）：`isLargeText=1` 的大文本行正文在 `largeTextContent`，`content` 只剩 `completeContent.url`；只读 content 会空文本→误报“未捕获终稿”。
 - **列表标题带「智能体」标签**：`.title` 的文本是 `交付赋能总教练 智能体`，而 webview 标题是 `交付赋能总教练`。名字取 `.mid-info[title]`，比较前统一去掉后缀。
