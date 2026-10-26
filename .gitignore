@@ -11,3 +11,4 @@ references/replay-sse.txt
 references/db-inspect-*.json
 references/clarify-payload.json
 references/ws-*.json
+__pycache__/

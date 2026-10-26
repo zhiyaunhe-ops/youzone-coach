@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "description_max_chars": 400,
+  "skills": [
+    {
+      "path": "SKILL.md",
+      "name": "youzone-coach",
+      "max_chars": 8000,
+      "reference_docs": [
+        "references/desktop-and-history.md",
+        "references/ask-api.md",
+        "references/headless-protocol.md",
+        "references/maintenance-and-packaging.md"
+      ]
+    }
+  ],
+  "excluded_skills": []
+}
