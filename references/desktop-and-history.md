@@ -64,7 +64,7 @@ node scripts/bg.js --kill ask_both             # 停掉（别留半拉会话一�
 
 ## 通道 A：只读本地消息库（不打断用户，读历史用它）
 
-- 库：`%APPDATA%\youzone\sqlite\YYIMDB_<memberId>_esn.db`（+`-wal`/`-shm`，明文 SQLite），客户端独占 → 先共享读复制再打开；文本 **GBK**，node:sqlite 必须 `CAST(col AS BLOB)` 取原始字节再用 `TextDecoder('gbk')` 解（直接读 TEXT 会 UTF-8 乱码丢数据）。lib.js 已封装（copyDb/openCopy/decodeText）。
+- 库：Windows `%APPDATA%\youzone\sqlite\YYIMDB_<memberId>_esn.db`，macOS `~/Library/Application Support/youzone/sqlite/YYIMDB_<memberId>_esn.db`（+`-wal`/`-shm`，明文 SQLite），客户端独占 → 先共享读复制再打开；文本 **GBK**，node:sqlite 必须 `CAST(col AS BLOB)` 取原始字节再用 `TextDecoder('gbk')` 解（直接读 TEXT 会 UTF-8 乱码丢数据）。lib.js 已封装（copyDb/openCopy/decodeText）。
 - 关键表：`newMessage`（消息，按 `ts` 排序；`isLargeText` 大文本字段）、`roster`、`pubaccount`、`digitals`、`groupRobot`。
 - 教练会话按 `newMessage.oppositeId` 区分（见文首对照表）。**不要用 `pubaccount`/`digitals` 表反查显示名**——实测这两张表在本机是空壳，取不到名字。
 - 本地库里的 `ipa_` 会话数**很少**（本机 2026-10-17 只有 4 个），而客户端「智能体」目录有 882 个——**别用库里的条数判断教练在不在**。库里的其它 `ipa_` 多是系统通知/数字人，别当成第三个教练；识别用 `scripts/identify_peers.js`，或直接 `discover_coaches.js` 看实时列表。

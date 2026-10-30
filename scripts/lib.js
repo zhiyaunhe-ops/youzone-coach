@@ -47,6 +47,9 @@ function resolvePeer(p) {
 function peerName(p) { return PEER_NAMES[resolvePeer(p)] || resolvePeer(p); }
 
 function dbDir() {
+  if (process.platform === 'darwin') {
+    return path.join(os.homedir(), 'Library', 'Application Support', 'youzone', 'sqlite');
+  }
   return path.join(process.env.APPDATA || '', 'youzone', 'sqlite');
 }
 
